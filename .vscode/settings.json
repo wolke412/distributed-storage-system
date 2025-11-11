@@ -1,0 +1,8 @@
+{
+  "files.associations": {
+    "packet.h": "c",
+    "array": "c",
+    "functional": "c",
+    "tuple": "c"
+  }
+}
