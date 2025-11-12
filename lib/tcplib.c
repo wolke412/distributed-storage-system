@@ -135,14 +135,16 @@ int tcp_open(const Address *address) {
     }
 
     struct sockaddr_in addr;
+
     memset(&addr, 0, sizeof(addr));
+
     addr.sin_family = AF_INET;
     addr.sin_port = htons(address->port);
+
     memcpy(&addr.sin_addr.s_addr, address->ip.octet, 4);
 
-
     if (connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        // perror("connect");
+        perror("connect");
         close(sockfd);
         return -1;
     }

@@ -1,11 +1,14 @@
-// example_server.c
 #include "lib/server/server.h"
 #include "lib/tcplib.h"
 #include "lib/args.h"
 #include "lib/nettypes.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
-#include <memory.h>
+
+
+#define DEBUG               1
+
 
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -31,6 +34,7 @@ int main(int argc, char **argv) {
     debug_address(&addr);
     // ------------------------------------------------------------ 
     
+    xFileServer fs;
     Server sv; 
     
     if ( ! server_init(&sv, &args) )
@@ -39,8 +43,26 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    printf("Server initialized. Opening socket... \n");
+    if ( ! xfileserver_init(&fs) )
+    {
+        perror("Unable to initalize file server.");
+        return 1;
+    }
 
+    #if DEBUG
+        const char frag1[] = "Hello ";
+        const char frag2[] = "World! i'm very gay";
+        uint64_t sz = sizeof(frag1) +sizeof(frag2);
+
+        xFileContainer *file = xfileserver_add_file(&fs, "data.bin", 1, sz, 2);
+
+        xfileserver_add_fragment(file, 0, frag1, sizeof(frag1));
+        xfileserver_add_fragment(file, 1, frag2, sizeof(frag2));
+
+        xfileserver_debug(&fs);
+    #endif
+
+    printf("Server initialized. Opening socket... \n");
 
     while(1) 
     {
@@ -128,9 +150,30 @@ int main(int argc, char **argv) {
                 tcp_socket c = server_accept(&sv);
                 if ( c < 0 ) break;
 
+                printf("Waiting...\n");
+
+                xPacket p = server_wait_from_client( &sv, c);
+
+                if ( p.size < 0) {
+                    printf("DEU MERDA RECEBENDO CONHECIMENTO EM. \n");
+                    break;
+                }
+
+                if ( p.bytes.comm.type != TYPE_REPORT_PEER) {
+                    printf("UNEXPECTED TYPE \n");
+                    break;
+                }
+
+                if ( sv.index_data == NULL ) {
+                    printf("INDEX STRUTURES NOT BUILT! \n");
+                    break;
+                }
+
+                server_index_save_reported_peer( &sv, &p );
+
                 sv.machine_state.StateIndexWaitingPeers.connected++;
 
-                printf("RECEIVED %d / %d \n", sv.machine_state.StateIndexWaitingPeers.connected, sv.net_size - 1);
+                printf("RECEIVED %ld / %ld \n", sv.machine_state.StateIndexWaitingPeers.connected, sv.net_size - 1);
 
                 server_close_socket( &sv, c );
 
@@ -154,8 +197,9 @@ int main(int argc, char **argv) {
                 char addr[40];
                 address_to_string( &p2.index_addr, addr, 40);
 
-                printf("SO INDEX IS #%ld @ %s \n", p2.index_id, addr);
+                printf("SO INDEX IS NODE #%ld @ %s \n", p2.index_id, addr);
                 sv.index.ip = p2.index_addr;  
+                sv.index.node_id = p2.index_id;
                
                 // forwarding                
                 if ( p2.index_id != sv.peer_f.node_id ) {
@@ -186,6 +230,20 @@ int main(int argc, char **argv) {
                     break;
                 }
 
+                printf("INDEX CONNECTION %d\n", sv.index.stream_fd);
+
+                xPacket p = xpacket_report_peer(&sv);
+                xpacket_debug(&p);
+
+                int w = 0;
+                do {
+                    w = server_send_to_index( &sv, &p );
+                    perror("index write");
+                    usleep(10 * 1000);
+                } while(w == 0);
+
+                printf("\nWrote %d bytes to INDEX #%ld\n", w, sv.index.node_id);
+
                 server_set_state(&sv, SERVER_IDLE);
 
                 break;
@@ -193,7 +251,7 @@ int main(int argc, char **argv) {
             }
             
             case SERVER_IDLE: {
-                printf("IDLING...\n");
+                // printf("IDLING...\n");
             }
 
 

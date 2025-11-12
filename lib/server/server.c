@@ -1,7 +1,10 @@
+
 #include "server.h"
+
 #include "../tcplib.h"    // your TCP helpers
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 // ------------------------------------------------------------
 // Initialize server
@@ -90,6 +93,9 @@ void server_set_state(Server *sv, eServerState st) {
         case SERVER_INDEX_WAITING_PEERS: {
             sv->machine_state.StateIndexWaitingPeers.connected = 0;
         }
+        default: {
+            // nothing to do
+        }
     }
 
 }
@@ -149,7 +155,7 @@ int server_accept(Server *sv) {
 }
 
 void server_close_socket(Server *sv, int socket) {
-    if (!sv || sv->listener_fd < 0) return -1;
+    if (!sv || sv->listener_fd < 0) return;
     return tcp_close( socket );
 }
 
@@ -182,6 +188,28 @@ int server_dial_index(Server *sv) {
 size_t server_send_to_peer_f(Server *sv, xPacket *packet) {
     return tcp_send( sv->peer_f.stream_fd, packet->bytes.raw , packet->size );
 }
+// ------------------------------------------------------------
+size_t server_send_to_index(Server *sv, xPacket *packet) {
+    return tcp_send( sv->index.stream_fd, packet->bytes.raw , packet->size );
+}
+//-
+
+
+xPacket server_wait_from_client(Server *sv, int fd) {
+
+    xPacket p = {0};
+
+    int read = tcp_recv( fd, p.bytes.raw, sizeof(p.bytes.raw));
+
+    p.size = read;
+
+    if (read < 0) {
+        perror("tcp_recv");
+        // maybe handle?
+    }
+
+    return p;
+}
 
 xPacket server_wait_from_peer_b(Server *sv) {
 
@@ -189,14 +217,64 @@ xPacket server_wait_from_peer_b(Server *sv) {
 
     int read = tcp_recv( sv->peer_b.stream_fd, p.bytes.raw, sizeof(p.bytes.raw));
 
-    printf("Read %d bytes \n", read );
+    p.size = read;
 
     if (read < 0) {
         perror("tcp_recv");
+        // maybe handle?
+    }
+
+    return p;
+}
+
+
+
+void server_index_save_reported_peer(Server *sv, xPacket *p) {
+
+    node_id_t sender = p->bytes.comm.sender_id;
+    node_id_t peerid = p->bytes.comm.content.report_peer.peer_id;
+    Address peer_addr = p->bytes.comm.content.report_peer.peer_addr;
+
+    // @TODO: validate sender_id
+    printf(" SAVING NODE #%ld \n", sender);
+    sv->index_data->known_peers++;
+    *(sv->index_data->peer_ips + sender - 1) = peer_addr;
+
+    printf("FOUND:\n");
+    for (int i = 0; i < sv->net_size - 1; i++)
+    {
+        Address a = *(sv->index_data->peer_ips + i);
+        printf("NODE #%d -> :%d\n", i + 1, a.port);
+    }
+}
+
+// ------------------------------------------------------------
+xPacket xpacket_report_peer( Server *sv ) 
+{
+    xPacket p = {0};
+
+    p.bytes.comm.sender_id  = sv->me.node_id;
+    p.bytes.comm.type       = TYPE_REPORT_PEER;
+
+    xPeerConnection c = sv->peer_f;
+    p.bytes.comm.content.report_peer.peer_addr  = c.ip;
+    p.bytes.comm.content.report_peer.peer_id    = c.node_id;
+
+    p.size = sizeof( p.bytes.comm ) + sizeof(p.size);
+
+    return p;
+}
+// ------------------------------------------------------------
+void xpacket_debug(const xPacket *p) {
+    if (!p) {
+        printf("xPacket: (null)\n");
         return;
     }
 
-    p.size = read;
-
-    return p;
+    printf("xPacket raw[0:%d]: \"", p->size);
+    for (int i = 0; i < p->size && i < 4096; ++i) {
+        unsigned char c = p->bytes.raw[i];
+        printf("\\x%02X", c);
+    }
+    printf("\"\n");
 }
