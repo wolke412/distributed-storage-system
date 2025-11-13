@@ -1,5 +1,6 @@
 all:
 	gcc  		\
+		-fshort-enums \
 		-Wall -Wextra -O2 \
 		-Ilib \
 		-Iinclude \

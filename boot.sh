@@ -3,6 +3,26 @@
 BASE_PORT=52000
 NUM_NODES=4
 
+# flags
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --bp)
+            BASE_PORT="$2"
+            shift 2
+            ;;
+        --n)
+            NUM_NODES="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Usage: $0 [--bp N] [--n N]"
+            exit 1
+            ;;
+    esac
+done
+
+
 for ((i=1; i<=NUM_NODES; i++)); do
     id=$i
     ip="localhost"

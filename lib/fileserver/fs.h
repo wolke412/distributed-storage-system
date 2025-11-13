@@ -8,11 +8,16 @@
 
 
 #include <stdint.h>
+#include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 
+// printing shit
+#include <ctype.h>
 
 
+
+static int FILE_SERVER_ID = 0;
 
 typedef struct xFileFragment {
   __FILE_FRAGMENT_ID_TYPE__ fragment_id; // 0, 1, 2, 3... ,
@@ -27,15 +32,29 @@ typedef struct xFileContainer {
   uint8_t fragment_count_total;
 
   xFileFragment fragments[2];
-  uint8_t *fragment_bytes;
 } xFileContainer;
 
 typedef struct xFileServer{
   uint16_t file_count;
   xFileContainer *files;
 } xFileServer;
+
+// ------------------------------------------------------------ 
+typedef struct xFileIndex{
+  int a;
+} xFileIndex;
 // ------------------------------------------------------------ 
 
+
+typedef enum eFileAddFragStatus {
+    FRAG_OK = 1,
+    FRAG_ERR_INVALID_FILE   = -1,
+    FRAG_ERR_INVALID_INDEX  = -2,
+    FRAG_ERR_INVALID_BYTES  = -3,
+} eFileAddFragStatus;
+    
+
+// ------------------------------------------------------------ 
 
 
 int xfileserver_init(xFileServer *fs);
@@ -49,7 +68,7 @@ xFileContainer *xfileserver_add_file(
 );
 
 
-int xfileserver_add_fragment(
+eFileAddFragStatus xfileserver_add_fragment(
     xFileContainer *file,
     uint8_t fragment_index,
     const void *data,

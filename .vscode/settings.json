@@ -3,6 +3,7 @@
     "packet.h": "c",
     "array": "c",
     "functional": "c",
-    "tuple": "c"
+    "tuple": "c",
+    "nettypes.h": "c"
   }
 }

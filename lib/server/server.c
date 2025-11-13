@@ -39,8 +39,10 @@ int server_init(Server *sv, const Args *opts) {
     // --------------------------------------------------
     sv->state       = SERVER_BOOTING;
     sv->net_size    = opts->netsize;
-    sv->peers     = malloc( sizeof(int) * sv->net_size );
+    sv->peers       = malloc( sizeof(int) * sv->net_size );
+
     sv->listener_fd = -1;
+    sv->client_fd   = -1;
 
     sv->index_data = NULL;
 
@@ -192,10 +194,27 @@ size_t server_send_to_peer_f(Server *sv, xPacket *packet) {
 size_t server_send_to_index(Server *sv, xPacket *packet) {
     return tcp_send( sv->index.stream_fd, packet->bytes.raw , packet->size );
 }
+// ------------------------------------------------------------
+size_t server_send_to_socket(Server *sv, xPacket *packet, int fd) {
+    return tcp_send( fd , packet->bytes.raw , packet->size );
+}
 //-
 
+node_id_t server_wait_client_presentation(Server *sv, int c) {
+    xPacket p = server_wait_from_socket(sv, c);
 
-xPacket server_wait_from_client(Server *sv, int fd) {
+    if ( p.size == 0 ) {
+        return 0;
+    }
+
+    if ( p.bytes.comm.type != TYPE_PRESENT_ITSELF ) {
+        return 0;
+    }
+
+    return p.bytes.comm.sender_id;
+}
+
+xPacket server_wait_from_socket(Server *sv, int fd) {
 
     xPacket p = {0};
 
@@ -239,13 +258,6 @@ void server_index_save_reported_peer(Server *sv, xPacket *p) {
     printf(" SAVING NODE #%ld \n", sender);
     sv->index_data->known_peers++;
     *(sv->index_data->peer_ips + sender - 1) = peer_addr;
-
-    printf("FOUND:\n");
-    for (int i = 0; i < sv->net_size - 1; i++)
-    {
-        Address a = *(sv->index_data->peer_ips + i);
-        printf("NODE #%d -> :%d\n", i + 1, a.port);
-    }
 }
 
 // ------------------------------------------------------------
@@ -265,6 +277,18 @@ xPacket xpacket_report_peer( Server *sv )
     return p;
 }
 // ------------------------------------------------------------
+xPacket xpacket_presentation( Server *sv ) 
+{
+    xPacket p = {0};
+
+    p.bytes.comm.sender_id  = sv->me.node_id;
+    p.bytes.comm.type       = TYPE_PRESENT_ITSELF;
+
+    p.size = sizeof( p.bytes.comm ) + sizeof(p.size);
+
+    return p;
+}
+// ------------------------------------------------------------
 void xpacket_debug(const xPacket *p) {
     if (!p) {
         printf("xPacket: (null)\n");
@@ -278,3 +302,4 @@ void xpacket_debug(const xPacket *p) {
     }
     printf("\"\n");
 }
+

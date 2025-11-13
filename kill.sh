@@ -2,7 +2,8 @@
 
 echo "Killing all node processes..."
 
-pkill -f "./main"
+U="wolke"
+pkill -u "$U" -f "./main"
 
 echo "All nodes terminated."
 

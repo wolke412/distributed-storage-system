@@ -15,6 +15,7 @@ tcp_socket tcp_accept(tcp_socket server_sock);
 
 size_t tcp_peek(tcp_socket client_sock, void *buffer, size_t len);
 size_t tcp_has_data(tcp_socket client_sock);
+int FD_tcp_has_data(tcp_socket sock);
 
 size_t tcp_recv(tcp_socket client_sock, void *buffer, size_t len);
 size_t tcp_recv_u(tcp_socket client_sock, void *buffer, size_t len); 

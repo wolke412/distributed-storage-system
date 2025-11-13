@@ -1,8 +1,5 @@
 #include "fs.h"
 
-
-
-
 // -----------------------------------------------------------------------------
 // Initialize the index
 // -----------------------------------------------------------------------------
@@ -33,11 +30,9 @@ xFileContainer *xfileserver_add_file(
 
     strncpy(file->file_name, file_name, sizeof(file->file_name) - 1);
 
-    file->file_id = file_id;
-    file->size = total_size;
-    file->fragment_count_total = fragment_count_total;
-
-    if (!file->fragments) return NULL;
+    file->file_id               = file_id;
+    file->size                  = total_size;
+    file->fragment_count_total  = fragment_count_total;
 
     return file;
 }
@@ -45,14 +40,14 @@ xFileContainer *xfileserver_add_file(
 // -----------------------------------------------------------------------------
 // Add a fragment to a file
 // -----------------------------------------------------------------------------
-int xfileserver_add_fragment(
+eFileAddFragStatus xfileserver_add_fragment(
     xFileContainer *file,
     uint8_t fragment_index,
     const void *data,
     uint64_t size
 ) {
-    if (!file || !file->fragments) return -1;
-    if (fragment_index >= file->fragment_count_total) return -2;
+    if (!file) return FRAG_ERR_INVALID_FILE;
+    if (fragment_index >= file->fragment_count_total) return FRAG_ERR_INVALID_INDEX;
 
     xFileFragment *frag = &file->fragments[fragment_index];
     frag->fragment_id = fragment_index;
@@ -61,7 +56,8 @@ int xfileserver_add_fragment(
 
     memcpy(frag->fragment_bytes, data, size);
     frag->fragment_size = size;
-    return 0;
+
+    return FRAG_OK;
 }
 
 // -----------------------------------------------------------------------------
@@ -70,14 +66,10 @@ int xfileserver_add_fragment(
 void xfileserver_free_file(xFileContainer *file) {
     if (!file) return;
 
-    if (file->fragments) {
-        for (uint8_t i = 0; i < file->fragment_count_total; i++) {
-            free(file->fragments[i].fragment_bytes);
-        }
-        free(file->fragments);
+    for (uint8_t i = 0; i < file->fragment_count_total; i++) {
+        free(file->fragments[i].fragment_bytes);
     }
 
-    free(file->fragment_bytes);
     memset(file, 0, sizeof(xFileContainer));
 }
 
@@ -115,11 +107,6 @@ void xfileserver_debug(const xFileServer *fs) {
                file->file_id,
                (unsigned long long)file->size,
                file->fragment_count_total);
-
-        if (!file->fragments) {
-            printf("  (no fragments loaded)\n\n");
-            continue;
-        }
 
         for (uint8_t f = 0; f < file->fragment_count_total; f++) {
             const xFileFragment *frag = &file->fragments[f];

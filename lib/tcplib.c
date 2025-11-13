@@ -80,9 +80,7 @@ tcp_socket tcp_accept(tcp_socket server_sock) {
         return -1;
     }
 
-    printf("Client connected: %s:%d\n",
-           inet_ntoa(client_addr.sin_addr),
-           ntohs(client_addr.sin_port));
+    // printf("Client connected: %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
     return client_sock;
 }
@@ -95,6 +93,21 @@ size_t tcp_has_data(tcp_socket client_sock) {
     int i = 0;
     return recv(client_sock, &i, 0, MSG_PEEK);
 }
+
+int FD_tcp_has_data(tcp_socket sock) {
+    fd_set readfds;
+    FD_ZERO(&readfds);
+    FD_SET(sock, &readfds);
+
+    struct timeval tv = {0, 0}; // no wait, immediate return
+    int res = select(sock + 1, &readfds, NULL, NULL, &tv);
+
+    if (res > 0 && FD_ISSET(sock, &readfds)) {
+        return 1; // data available
+    }
+    return 0; // no data
+}
+
 
 size_t tcp_recv(tcp_socket client_sock, void *buffer, size_t len ) {
     return recv(client_sock, buffer, len, 0);

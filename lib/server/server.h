@@ -18,6 +18,10 @@
 
 #include "../fileserver/fs.h"  
 
+
+#define CLIENT_NODE_ID              ((node_id_t)((2<<64) - 1))
+
+
 typedef enum  {
     UNAUTHENTICATED,
     IDLE,
@@ -53,13 +57,116 @@ typedef struct {
 } xWhoAmI;
 // ------------------------------------------------------------ 
 
+
+
+
+
+/**
+ * 
+ *  ------------------------------------------------------------ 
+ */
+typedef struct xIndexPresentationPacket {
+  node_id_t sender_id;
+  node_id_t index_id;
+  Address index_addr;
+} xIndexPresentationPacket;
+
+typedef struct xPeerIsDeadMessage{
+  node_id_t dead_peer_id;
+  Address sender_address;
+} xPeerIsDeadMessage;
+
+typedef struct xPeerReportMessage{
+  node_id_t peer_id;
+  Address peer_addr;
+} xPeerReportMessage;
+
+typedef struct xRequestFileCreation{
+  char name[256];
+  uint64_t file_size;
+} xRequestFileCreation;
+
+typedef struct xResponseFileCreation{
+  uint64_t buffer_limit;
+} xResponseFileCreation;
+
+//-
+
+typedef enum { // force to uint8_t
+
+  TYPE_LEADER_IS_DEAD           = 0 , // disseminates panic in the network
+
+  TYPE_PRESENT_ITSELF           = 1,
+
+  TYPE_PEER_IS_DEAD              , // do you have what it takes to crush my rat? 
+                                   //
+
+  TYPE_REPORT_PEER, 
+
+  TYPE_REQUEST_FILE_INDEX, 
+
+
+  TYPE_CREATE_FILE = 10,
+
+} eMessageType;
+
+
+typedef struct __attribute((packed)) {
+
+  node_id_t sender_id;
+
+  uint8_t type;
+
+  union {
+    // ----------------------------------------
+    xPeerIsDeadMessage dead_peer;
+    // ----------------------------------------
+    xPeerReportMessage report_peer;
+    // ----------------------------------------
+    xRequestFileCreation create_file;
+    xResponseFileCreation res_create_file;
+    // ----------------------------------------
+    // xPeerReportMessage report_peer;
+    // ----------------------------------------
+
+  } content;
+
+} xCommunicationPacket;
+  
+typedef struct {
+
+  union PacketType {
+    
+      // this is dumb. but il keep it to remind me of how dumb one can be
+    xIndexPresentationPacket index_presentation_pkt; 
+
+    // this should be enough
+    xCommunicationPacket comm; 
+
+    uint8_t raw[4096];
+
+  } bytes;
+
+  int16_t size; 
+
+} xPacket;
+
+// ------------------------------------------------------------ 
+
+
+
+
+
+
 typedef union {
     
   struct StateConnecting { node_id_t waiting_peer_id; } StateConnecting;
 
   struct StateIndexWaitingPeers { uint64_t connected; } StateIndexWaitingPeers;
 
+  struct StateRawPackets { bool uploading; size_t n_pkts; uint64_t total_size; int client_fd; char *buffer; xRequestFileCreation fc; } StateRawPackets;
 
+  struct StateReceivedPacket { xPacket packet; int from_fd; } StateReceivedPacket ;
 
 } uMachineState;
 
@@ -77,11 +184,18 @@ typedef enum  {
     // iDX SPECIFIC
     SERVER_INDEX_PRESENT_ITSELF,
     SERVER_INDEX_WAITING_PEERS,
+    SERVER_INDEX_HANDLE_NEW_FILE,
 
 
     // non-iDX specifics
     SERVER_WAIT_INDEX_GOSSIP,
     SERVER_REPORT_KNOWLEDGE_TO_INDEX,
+
+
+
+    SERVER_RECEIVED_PACKET,
+
+    SERVER_WAITING_RAW_PACKETS,
 
 
     SERVER_OTHER      = 99
@@ -117,84 +231,12 @@ typedef struct {
 
     int listener_fd;            // TCP listener socket
     int *peers;                 // Malloc'ed clients based on netsize
+                                //
+    int client_fd;            // TCP listener socket
 
 } Server;
 
 
-// ------------------------------------------------------------
-typedef struct xIndexPresentationPacket {
-  node_id_t sender_id;
-  node_id_t index_id;
-  Address index_addr;
-} xIndexPresentationPacket;
-
-typedef struct xPeerIsDeadMessage{
-  node_id_t dead_peer_id;
-  Address sender_address;
-} xPeerIsDeadMessage;
-
-typedef struct xPeerReportMessage{
-  node_id_t peer_id;
-  Address peer_addr;
-} xPeerReportMessage;
-
-// typedef struct xPeerReportMessage{
-//   node_id_t peer_id;
-//   Address peer_addr;
-// } xPeerReportMessage;
-
-//-
-
-typedef enum eMessageType {
-
-  TYPE_LEADER_IS_DEAD        = 0 , // disseminates panic in the network
-  TYPE_PEER_IS_DEAD              , // do you have what it takes to crush my rat? 
-
-  TYPE_REPORT_PEER, 
-
-  TYPE_REQUEST_FILE_INDEX, 
-
-} eMessageType;
-
-typedef struct {
-
-  node_id_t sender_id;
-
-  eMessageType type;
-
-  union {
-
-    // ----------------------------------------
-    xPeerIsDeadMessage dead_peer;
-    // ----------------------------------------
-    xPeerReportMessage report_peer;
-    // ----------------------------------------
-    // xPeerReportMessage report_peer;
-    // ----------------------------------------
-    // xPeerReportMessage report_peer;
-    // ----------------------------------------
-
-  } content;
-
-} xCommunicationPacket;
-  
-typedef struct {
-
-  union PacketType {
-
-    xIndexPresentationPacket index_presentation_pkt; 
-
-    xCommunicationPacket comm; 
-
-    uint8_t raw[4096];
-
-  } bytes;
-
-  int16_t size; 
-
-} xPacket;
-
-// ------------------------------------------------------------ 
 
 int server_init(Server *sv, const Args *opts);
 int server_open(Server *sv);
@@ -219,12 +261,16 @@ void server_index_save_reported_peer(Server *sv, xPacket *packet);
 
 size_t server_send_to_peer_f(Server *sv, xPacket *packet);
 size_t server_send_to_index(Server *sv, xPacket *packet);
+size_t server_send_to_socket(Server *sv, xPacket *packet, int fd);
 
 xPacket server_wait_from_peer_b(Server *sv);
-xPacket server_wait_from_client(Server *sv, int fd);
+xPacket server_wait_from_socket(Server *sv, int fd);
+
+node_id_t server_wait_client_presentation(Server *sv, int c);
 
 
-
+void server_onxpacket(Server *sv);
+void server_handle_raw_packets(Server *sv);
 
 
 // ------------------------------------------------------------
@@ -232,6 +278,7 @@ xPacket server_wait_from_client(Server *sv, int fd);
 // ------------------------------------------------------------
 
 xPacket xpacket_report_peer( Server *sv );
+xPacket xpacket_presentation( Server *sv );
 void xpacket_debug(const xPacket *p);
 
 #endif // SERVER_H
