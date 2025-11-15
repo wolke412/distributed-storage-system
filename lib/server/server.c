@@ -1,10 +1,9 @@
-
 #include "server.h"
-
+    
 #include "../tcplib.h"    // your TCP helpers
+#include "../defines.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
 // ------------------------------------------------------------
 // Initialize server
@@ -88,6 +87,16 @@ void server_close(Server *sv) {
 
 // ------------------------------------------------------------
 void server_set_state(Server *sv, eServerState st) {
+    
+    #if LOG_STATE_CHANGES
+        printf("\n---------------------------------\n");
+        printf("FROM:\t");
+        print_state(sv->state);
+        printf("\nTO:  \t");
+        print_state(st);
+        printf("\n---------------------------------\n");
+    #endif
+
     if (sv) sv->state = st;
 
     // required state swaps
@@ -101,7 +110,6 @@ void server_set_state(Server *sv, eServerState st) {
     }
 
 }
-
 // ------------------------------------------------------------
 // Check peer connection states
 // ------------------------------------------------------------
@@ -111,6 +119,15 @@ bool server_is_peerf_connected(const Server *sv) {
 
 bool server_is_peerb_connected(const Server *sv) {
     return sv && sv->peer_b.status.open;
+}
+
+
+int server_dial(Server *sv, Address *a) {
+    if (!sv) return 0;
+
+    int fd = tcp_open(a);
+
+    return fd;
 }
 
 // ------------------------------------------------------------
@@ -197,8 +214,59 @@ size_t server_send_to_index(Server *sv, xPacket *packet) {
 // ------------------------------------------------------------
 size_t server_send_to_socket(Server *sv, xPacket *packet, int fd) {
     return tcp_send( fd , packet->bytes.raw , packet->size );
+
 }
+// ------------------------------------------------------------
+int server_send_large_buffer_to( Server *sv, int fd, int buffer_size, char *buffer, int bucket_size )
+{
+    printf("SENDING LARGE BUFFER\n");
+    int n_packets = buffer_size / bucket_size + 1;
+    
+    xPacket x = {0};
+    char* bucket = (char*)&x.bytes.raw;
+
+    int results = 0;
+
+    int curptr = 0;
+    for ( int i = 0 ; i < n_packets ; i++ ) 
+    {
+        printf("SENDING PART %d of %d\n", i+1, n_packets);
+
+		int st  = i * bucket_size; 
+		int end = st + bucket_size; 
+		if ( end > buffer_size )
+        {
+			end = buffer_size;
+		}
+
+        int size = end - st;
+
+        memcpy( bucket, buffer + curptr, size );
+        x.size = size;
+
+        int r = server_send_to_socket(sv, &x, fd);
+        
+        if ( r <= 0 ) {
+            printf("SOMETING STRANGE HAPPENED ON BUCKET #%d\n", i+1);
+        }
+
+        results += r;
+        curptr += size;
+
+        printf("TOTAL of %d bytes sent.\n", curptr);
+    }
+
+    return 1;
+}
+
 //-
+//
+//
+//
+//
+//
+//
+//
 
 node_id_t server_wait_client_presentation(Server *sv, int c) {
     xPacket p = server_wait_from_socket(sv, c);
@@ -251,8 +319,7 @@ xPacket server_wait_from_peer_b(Server *sv) {
 void server_index_save_reported_peer(Server *sv, xPacket *p) {
 
     node_id_t sender = p->bytes.comm.sender_id;
-    node_id_t peerid = p->bytes.comm.content.report_peer.peer_id;
-    Address peer_addr = p->bytes.comm.content.report_peer.peer_addr;
+    Address peer_addr = p->bytes.comm.content.report_self.peer_addr;
 
     // @TODO: validate sender_id
     printf(" SAVING NODE #%ld \n", sender);
@@ -261,16 +328,28 @@ void server_index_save_reported_peer(Server *sv, xPacket *p) {
 }
 
 // ------------------------------------------------------------
-xPacket xpacket_report_peer( Server *sv ) 
+xPacket xpacket_report_self( Server *sv ) 
 {
     xPacket p = {0};
 
     p.bytes.comm.sender_id  = sv->me.node_id;
-    p.bytes.comm.type       = TYPE_REPORT_PEER;
+    p.bytes.comm.type       = TYPE_REPORT_SELF;
 
-    xPeerConnection c = sv->peer_f;
-    p.bytes.comm.content.report_peer.peer_addr  = c.ip;
-    p.bytes.comm.content.report_peer.peer_id    = c.node_id;
+    // xPeerConnection c = sv->peer_f;
+    p.bytes.comm.content.report_self.peer_addr  = sv->me.ip;
+    // p.bytes.comm.content.report_self.peer_id    = c.node_id;
+
+    p.size = sizeof( p.bytes.comm ) + sizeof(p.size);
+
+    return p;
+}
+// ------------------------------------------------------------
+xPacket xpacket_ok( Server *sv ) 
+{
+    xPacket p = {0};
+
+    p.bytes.comm.sender_id  = sv->me.node_id;
+    p.bytes.comm.type       = TYPE_OK;
 
     p.size = sizeof( p.bytes.comm ) + sizeof(p.size);
 
@@ -283,6 +362,20 @@ xPacket xpacket_presentation( Server *sv )
 
     p.bytes.comm.sender_id  = sv->me.node_id;
     p.bytes.comm.type       = TYPE_PRESENT_ITSELF;
+
+    p.size = sizeof( p.bytes.comm ) + sizeof(p.size);
+
+    return p;
+}
+// ------------------------------------------------------------
+xPacket xpacket_send_fragment( Server *sv, xRequestFragmentCreation *frag) 
+{
+    xPacket p = {0};
+
+    p.bytes.comm.sender_id  = sv->me.node_id;
+    p.bytes.comm.type       = TYPE_STORE_FRAGMENT;
+
+    p.bytes.comm.content.create_frag = *frag;
 
     p.size = sizeof( p.bytes.comm ) + sizeof(p.size);
 
@@ -303,3 +396,98 @@ void xpacket_debug(const xPacket *p) {
     printf("\"\n");
 }
 
+
+
+
+
+
+
+void xreqfragcreation_new( xRequestFragmentCreation *fragcreation, xFileContainer *fc, xFragmentNetworkPointer *frag )
+{
+    // sets file name
+    memcpy(
+            fragcreation->file_name,
+            fc->file_name,
+            sizeof(fc->file_name)
+          );
+
+    fragcreation->file_size             = fc->size;
+    fragcreation->file_id               = fc->file_id;
+    fragcreation->fragment_count_total  = fc->fragment_count_total;
+    fragcreation->frag_id               = frag->fragment;
+    fragcreation->frag_size             = frag->size;
+}
+
+
+
+
+
+
+
+
+
+
+// ------------------------------------------------------------
+void print_state(eServerState st) {
+    switch (st) {
+        case SERVER_BOOTING:
+            printf("SERVER_BOOTING");
+            break;
+
+        case SERVER_CONNECTING:
+            printf("SERVER_CONNECTING");
+            break;
+
+        case SERVER_BEGIN_OPERATION:
+            printf("SERVER_BEGIN_OPERATION");
+            break;
+
+        case SERVER_IDLE:
+            printf("SERVER_IDLE");
+            break;
+
+        case SERVER_RECEIVED_PACKET:
+            printf("SERVER_RECEIVED_PACKET");
+            break;
+
+        case SERVER_WAITING_RAW_PACKETS:
+            printf("SERVER_WAITING_RAW_PACKETS");
+            break;
+
+        case SERVER_RECEIVED_FRAGMENT:
+            printf("SERVER_RECEIVED_FRAGMENT");
+            break;
+
+        case SERVER_INDEX_PRESENT_ITSELF:
+            printf("SERVER_INDEX_PRESENT_ITSELF");
+            break;
+
+        case SERVER_INDEX_WAITING_PEERS:
+            printf("SERVER_INDEX_WAITING_PEERS");
+            break;
+
+        case SERVER_INDEX_HANDLE_NEW_FILE:
+            printf("SERVER_INDEX_HANDLE_NEW_FILE");
+            break;
+
+        case SERVER_INDEX_FANOUT_FRAGMENTS:
+            printf("SERVER_INDEX_FANOUT_FRAGMENTS");
+            break;
+
+        case SERVER_WAIT_INDEX_GOSSIP:
+            printf("SERVER_WAIT_INDEX_GOSSIP");
+            break;
+
+        case SERVER_REPORT_KNOWLEDGE_TO_INDEX:
+            printf("SERVER_REPORT_KNOWLEDGE_TO_INDEX");
+            break;
+
+        case SERVER_OTHER:
+            printf("SERVER_OTHER");
+            break;
+
+        default:
+            printf("UNKNOWN_STATE (%d)", st);
+            break;
+    }
+}

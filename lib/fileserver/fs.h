@@ -1,4 +1,3 @@
-
 #ifndef FILE_SERVER_H
 #define FILE_SERVER_H
 
@@ -20,7 +19,7 @@
 static int FILE_SERVER_ID = 0;
 
 typedef struct xFileFragment {
-  __FILE_FRAGMENT_ID_TYPE__ fragment_id; // 0, 1, 2, 3... ,
+  __FILE_FRAGMENT_ID_TYPE__ fragment_id; // 1, 2, 3... ,
   char *fragment_bytes;
   uint64_t fragment_size;
 } xFileFragment;
@@ -40,9 +39,28 @@ typedef struct xFileServer{
 } xFileServer;
 
 // ------------------------------------------------------------ 
-typedef struct xFileIndex{
-  int a;
-} xFileIndex;
+typedef struct xFragmentNetworkPointer {
+    uint16_t fragment;
+    uint64_t size;
+    uint64_t node_id;       
+} xFragmentNetworkPointer;
+
+// linked list like
+typedef struct xFileInNetwork{
+    uint16_t file_id;
+    uint64_t total_fragments; // this includes redundancy
+    xFragmentNetworkPointer *fragments;
+
+    struct xFileInNetwork *next;
+} xFileInNetwork;
+
+typedef struct xFileNetworkIndex {
+    uint16_t file_id;
+    uint16_t file_count;
+
+    xFileInNetwork *files;
+    xFileInNetwork *TAIL;
+} xFileNetworkIndex;
 // ------------------------------------------------------------ 
 
 
@@ -70,7 +88,7 @@ xFileContainer *xfileserver_add_file(
 
 eFileAddFragStatus xfileserver_add_fragment(
     xFileContainer *file,
-    uint8_t fragment_index,
+    uint8_t fragment_id,
     const void *data,
     uint64_t size
 );
@@ -78,9 +96,21 @@ eFileAddFragStatus xfileserver_add_fragment(
 void xfileserver_free_file(xFileContainer *file);
 void xfileserver_free_fs(xFileServer *fs);
 
+xFileContainer *xfileserver_find_file( xFileServer *idx, uint64_t id );
 
 // ------------------------------------------------------------
 void xfileserver_debug(const xFileServer *fs);
+
+
+
+
+
+int xfilenetindex_init(xFileNetworkIndex *net);
+xFileInNetwork *xfilenetindex_new_file(uint16_t file_id, uint64_t fragment_count);
+void xfilenetindex_add_file(xFileNetworkIndex *net, xFileInNetwork *file);
+xFileInNetwork *xfilenetindex_find_file(xFileNetworkIndex *net, uint16_t file_id);
+void xfilenetindex_debug(const xFileNetworkIndex *net);
+
 
 
 #endif // FILE_SERVER_H

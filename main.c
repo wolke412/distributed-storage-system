@@ -5,10 +5,9 @@
 #include "lib/nettypes.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
-
-
-#define DEBUG               1
+#include "lib/defines.h"
 
 
 
@@ -36,9 +35,10 @@ int main(int argc, char **argv) {
     debug_address(&addr);
     // ------------------------------------------------------------ 
     
-    xFileServer fs;
-    xFileIndex  fi;
     Server sv; 
+
+    xFileServer fs;
+    xFileNetworkIndex fnetidx; // used only by the index
     
     if ( ! server_init(&sv, &args) )
     {
@@ -52,15 +52,21 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    if ( ! xfilenetindex_init(&fnetidx) )
+    {
+        perror("Unable to initalize file network index server.");
+        return 1;
+    }
+
     #if DEBUG
         const char frag1[] = "Hello ";
-        const char frag2[] = "World! i'm very gay";
+        const char frag2[] = "World! i'm dumb";
         uint64_t sz = sizeof(frag1) +sizeof(frag2);
 
         xFileContainer *file = xfileserver_add_file(&fs, "data.bin", 1, sz, 2);
 
-        xfileserver_add_fragment(file, 0, frag1, sizeof(frag1));
-        xfileserver_add_fragment(file, 1, frag2, sizeof(frag2));
+        xfileserver_add_fragment(file, 1, frag1, sizeof(frag1));
+        xfileserver_add_fragment(file, 2, frag2, sizeof(frag2));
 
         xfileserver_debug(&fs);
     #endif
@@ -175,7 +181,7 @@ int main(int argc, char **argv) {
                 break;
             }
 
-            if (p.bytes.comm.type != TYPE_REPORT_PEER)
+            if (p.bytes.comm.type != TYPE_REPORT_SELF)
             {
                 printf("UNEXPECTED TYPE \n");
                 break;
@@ -260,8 +266,8 @@ int main(int argc, char **argv) {
 
             printf("INDEX CONNECTION %d\n", sv.index.stream_fd);
 
-            xPacket p = xpacket_report_peer(&sv);
-            xpacket_debug(&p);
+            xPacket p = xpacket_report_self(&sv);
+            // xpacket_debug(&p);
 
             int w = 0;
             do
@@ -281,7 +287,7 @@ int main(int argc, char **argv) {
         case SERVER_IDLE:
         {
 
-            printf(".");
+            //printf(".");
 
             if (sv.client_fd > 0)
             { // client is connected
@@ -322,7 +328,10 @@ int main(int argc, char **argv) {
                 }
                 else
                 {
+
                     printf("PRESENTED AS NODE #%lu.\n", N);
+                    xPacket pkt_ok = xpacket_ok(&sv);
+                    server_send_to_socket( &sv, &pkt_ok, c );  
 
                     if (N == CLIENT_NODE_ID)
                     {
@@ -330,7 +339,9 @@ int main(int argc, char **argv) {
                         sv.client_fd = c;
                         break;
                     }
+                    
 
+                    printf("Waiting...\n");
                     xPacket p = server_wait_from_socket(&sv, c);
 
                     if (p.size == 0)
@@ -338,6 +349,8 @@ int main(int argc, char **argv) {
                         printf("prolly closed by peer.\n");
                         break;
                     }
+
+                    printf("RECEIVED TYPE %d\n", p.bytes.comm.type);
 
                     server_set_state(&sv, SERVER_RECEIVED_PACKET);
                     sv.machine_state.StateReceivedPacket.from_fd = c; 
@@ -383,12 +396,42 @@ int main(int argc, char **argv) {
                     r = server_send_to_index(&sv, &p);
                 }
                 // uau
-                sv.machine_state.StateRawPackets.uploading = true;
+                sv.machine_state.StateRawPackets.trigger_pkt = TYPE_CREATE_FILE;
                 sv.machine_state.StateRawPackets.fc = fc;
                 sv.machine_state.StateRawPackets.n_pkts = (fc.file_size / 4096) + 1;
                 sv.machine_state.StateRawPackets.total_size = fc.file_size;
                 sv.machine_state.StateRawPackets.client_fd = sv.machine_state.StateReceivedPacket.from_fd;
                 server_set_state(&sv, SERVER_WAITING_RAW_PACKETS);
+
+                break;
+            }
+            case TYPE_STORE_FRAGMENT:
+            {
+                xRequestFragmentCreation fragc = p.bytes.comm.content.create_frag;
+
+                printf("FILE NAME: \t %s\n", fragc.file_name);
+                printf("FRAG ID: \t %ld\n", fragc.frag_id);
+                printf("FRAG SIZE: \t %ld\n", fragc.frag_size );
+                
+                xFileContainer *f = xfileserver_find_file(&fs, fragc.file_id);
+                if ( f == NULL ) 
+                { // must create file container
+                    f = xfileserver_add_file( &fs,  fragc.file_name, fragc.file_id, fragc.file_size, fragc.fragment_count_total);
+                    printf("FILE CREATED \n");
+                }    
+
+                // uau
+                sv.machine_state.StateRawPackets.trigger_pkt = TYPE_STORE_FRAGMENT;
+                sv.machine_state.StateRawPackets.fragc = fragc;
+                sv.machine_state.StateRawPackets.n_pkts = (fragc.frag_size/ 4096) + 1;
+                sv.machine_state.StateRawPackets.total_size = fragc.frag_size;
+                sv.machine_state.StateRawPackets.client_fd = sv.machine_state.StateReceivedPacket.from_fd;
+
+                server_set_state(&sv, SERVER_WAITING_RAW_PACKETS);
+
+                // send a ok to signal it is ready
+                xPacket pok = xpacket_ok(&sv);
+                server_send_to_socket( &sv, &pok, sv.machine_state.StateReceivedPacket.from_fd );
 
                 break;
             }
@@ -410,6 +453,7 @@ int main(int argc, char **argv) {
             int size = sv.machine_state.StateRawPackets.total_size;
             int n = sv.machine_state.StateRawPackets.n_pkts;
             int c = sv.machine_state.StateRawPackets.client_fd;
+            uint8_t trigger = sv.machine_state.StateRawPackets.trigger_pkt;
 
             char *file_buffer = (char *)malloc(sizeof(char) * size);
 
@@ -417,7 +461,7 @@ int main(int argc, char **argv) {
 
             xPacket xx = {0};
             xx.bytes.comm.sender_id = sv.me.node_id;
-            xx.bytes.comm.content.report_peer.peer_addr = sv.peer_f.ip;
+            xx.bytes.comm.content.report_self.peer_addr = sv.peer_f.ip;
             xx.size = sizeof(xx.bytes.comm);
 
             usleep(1 * 1000);
@@ -434,24 +478,43 @@ int main(int argc, char **argv) {
 
                 populated += p.size;
 
-                if (sv.index.node_id != sv.me.node_id)
+                if ( trigger == TYPE_CREATE_FILE && sv.index.node_id != sv.me.node_id )
                 {
                     printf("SINCRONIZANDO INDEX.\n");
                     server_send_to_index( &sv, &p );
                 }
 
-                printf("RAW : %.1f bytes.\n", (populated / size));
+                printf("RAW : %.2f%% bytes.\n", (100 * (float)populated / (float)size));
             }
 
             printf("DONE\n");
-
-            if (sv.index.node_id == sv.me.node_id)
+            switch (trigger) {
+            case TYPE_CREATE_FILE: 
             {
-                server_set_state(&sv, SERVER_INDEX_HANDLE_NEW_FILE);
+                if (sv.index.node_id == sv.me.node_id)
+                {
+                    server_set_state(&sv, SERVER_INDEX_HANDLE_NEW_FILE);
+                    break;
+                }
+
+                server_set_state(&sv, SERVER_IDLE);
                 break;
             }
+            case TYPE_STORE_FRAGMENT:
+            {
+                #if LOG_BUFFERS
+                    printf("-RAW BUFFER---------\n");
+                    printf("%s", sv.machine_state.StateRawPackets.buffer);
+                    printf("--------------------\n");
+                #endif
 
-            server_set_state(&sv, SERVER_IDLE);
+                // TODO: goto handle received fragment
+                // server_set_state(&sv, SERVER_IDLE);
+                server_set_state(&sv, SERVER_RECEIVED_FRAGMENT);
+                break;
+            }
+            }    
+
 
             break;
         }
@@ -471,30 +534,224 @@ int main(int argc, char **argv) {
             printf("HANDLING A %ld FILE named %s... \n", sz, fc.name);
 
             int fragcount = sv.net_size;
-            if ( sz <= sv.net_size || sz <= 1000 ) 
+             
+            if ( sz <= sv.net_size || sz <= MINIMAL_SIZE_FOR_SPLIT ) 
             {
-                printf("FILE TOO SMALL TO TRAFEGATE.");
+                printf("FILE TOO SMALL TO SPLIT.\n");
                 fragcount = 1;
             }
 
-            xfileserver_add_file(&fs, fc.name, FILE_SERVER_ID++, sz, fragcount);
+            int id = ++FILE_SERVER_ID;
+            xFileContainer *file = xfileserver_add_file(&fs, fc.name, id, sz, fragcount);
+   
+
+            printf("INDEXING FILE...\n");
+            xFileInNetwork *f = xfilenetindex_new_file(id, fragcount * REDUNDANCY);
 
             int fragsz = sz / fragcount;
             int remain = sz % fragcount;
+    
+            int internaloffset = 0;
 
             for ( int i = 0; i < fragcount; i++ ) 
             {
-                int sz = (i+1) == fragcount ? fragsz + remain : fragsz;
-                printf("Fragment #%d size %d\n", i, sz);
+                int fragmentsz = (i+1) == fragcount ? fragsz + remain : fragsz;
+                   
+                while (1) {
+                    // known peers is NET_SIZE - 1 (this one is myself)
+                    if ( (i + internaloffset) > (sv.index_data->known_peers) ) {
+                        // this is an inconsistency, netsize is less than active peers;
+                        goto weird;
+                    }
+
+                    Address *a = sv.index_data->peer_ips + i + internaloffset;
+
+                    if ( a == NULL ) {
+                        printf("INCREASING OFFSET\n");
+                        internaloffset++;
+                        continue;
+                    }
+                    break;
+                }
+
+                int node = i + internaloffset;
+
+                for (int j = 0; j < REDUNDANCY; j++) 
+                {
+                    node_id_t nid = (node + j) % sv.net_size;
+                    nid += 1; // nodes starts at 1
+                              
+                    printf("Fragment #%d into node %ld\n", i, nid);
+                    f->fragments[i * REDUNDANCY + j].fragment    = i + 1;
+                    f->fragments[i * REDUNDANCY + j].size        = fragmentsz;
+                    f->fragments[i * REDUNDANCY + j].node_id     = nid;
+                }
+
+                printf("Fragment #%d size %d\n", i, fragmentsz);
+            }
+
+            /**
+             * Adds to the index, will be used later to fan out 
+             * segments
+             */
+            xfilenetindex_add_file(&fnetidx, f);
+
+            xfileserver_debug(&fs);
+
+            server_set_state(&sv, SERVER_INDEX_FANOUT_FRAGMENTS);
+            sv.machine_state.StateHandleNewFile.fc      = file;
+            sv.machine_state.StateHandleNewFile.buffer  = b;
+            break;
+weird:
+            printf("SOMETHING REALLY WEIRD JUST HAPPENED.\n");
+            server_set_state(&sv, SERVER_IDLE);
+            break;
+        }
+
+        case SERVER_INDEX_FANOUT_FRAGMENTS:
+        {
+            printf("PREPARING TO FAN OUT\n");
+            xfilenetindex_debug(&fnetidx);
+
+            /**
+             * file buffer read from socket 
+             */
+            char *buffer = sv.machine_state.StateHandleNewFile.buffer;
+
+            xFileContainer *fc = sv.machine_state.StateHandleNewFile.fc;
+            xFileInNetwork *f = xfilenetindex_find_file(&fnetidx, fc->file_id);
+
+            printf("FILE name=%s size=%d fragments=%d.\n", fc->file_name, fc->size, f->total_fragments);
+          
+            #if LOG_BUFFERS
+                printf("--------------------\n");
+                printf("%s", buffer);
+                printf("--------------------\n");
+            #endif
+            
+
+            size_t bufptr = 0;
+            int baseoffset = fc->size / (f->total_fragments / REDUNDANCY ); 
+
+            for ( int i = 0 ; i < f->total_fragments ; i++ )
+            {
+                xFragmentNetworkPointer frag = f->fragments[i];
+                int offset =  baseoffset * (frag.fragment - 1);
+
+                printf("FRAG #%d SIZE=%d OFFSET=%d\n", frag.fragment, frag.size, offset);
+
+                // IF IS MY FRAGMENT
+                if ( frag.node_id == sv.me.node_id ) 
+                {
+                    printf("OHH THIS ONE IS MINE...\n");
+
+                    char *buf = (char*) malloc( sizeof(char) * frag.size );
+                    memcpy(buf, buffer + offset, frag.size);
+
+                    // special
+                    if ( fc->fragments[0].fragment_id == 0 ) {
+                        printf("INTO POS 0\n");
+                        fc->fragments[0].fragment_id    = frag.fragment; 
+                        fc->fragments[0].fragment_size  = frag.size; 
+                        fc->fragments[0].fragment_bytes = buf;
+                    } else 
+                    {
+                        printf("INTO POS 1\n");
+                        fc->fragments[1].fragment_id    = frag.fragment; 
+                        fc->fragments[1].fragment_size  = frag.size; 
+                        fc->fragments[1].fragment_bytes = buf;
+                    }
+                } else 
+                {
+                    Address *a = sv.index_data->peer_ips + frag.node_id - 1; // nodes start at index 1
+                    if (a == NULL) {
+                        printf("NODE #%ld address is NULL", frag.node_id);
+                        // TODO: falhar
+                        continue;
+                    }
+
+                    printf("DIALING :%d...\n", a->port);                
+
+                    int fd = server_dial(&sv, a);
+                    xPacket p = xpacket_presentation(&sv);
+
+                    server_send_to_socket(&sv, &p, fd);
+
+                    xPacket read = server_wait_from_socket(&sv, fd);
+                    printf("RECEIVED RESPONSE %d\n", read.bytes.comm.type);                
+
+                     
+                    xRequestFragmentCreation fragcreation = {0};
+                    xreqfragcreation_new(&fragcreation, fc, &frag);
+
+                    xPacket pkt_fragment = xpacket_send_fragment(&sv, &fragcreation);
+
+                    printf("SENDING to :%d\n", a->port);                
+
+                    server_send_to_socket(&sv, &pkt_fragment, fd);
+                    read = server_wait_from_socket(&sv, fd);
+
+                    printf("RECEIVED RESPONSE %d\n", read.bytes.comm.type);                
+                    printf("STARTING RAW TRANSMISSION: %d\n", read.bytes.comm.type);                
+                    
+                    char *fragbuffer = buffer + offset; // frag id starts at 1
+                    
+                    #if LOG_BUFFERS
+                        printf("-FRAG %3d--------\n", frag.fragment);
+                        printf("%.*s\n", frag.size, fragbuffer);
+                        printf("--------------------\n");
+                    #endif
+
+                    server_send_large_buffer_to( &sv, fd, frag.size, fragbuffer, 4096 );
+                }
             }
 
             xfileserver_debug(&fs);
 
-            // TODO MUST GO TO SERVER_INDEX_FANOUT_FRAGMENTS
-            server_set_state(&sv, SERVER_IDLE);
-            // .... STATE SHIT
+            server_set_state( &sv, SERVER_IDLE);
             break;
         }
+
+        case SERVER_RECEIVED_FRAGMENT:
+        {
+            printf("I RECEIVED A FRAGMENT\n");
+
+            xRequestFragmentCreation c  = sv.machine_state.StateRawPackets.fragc;
+            xFileContainer *fc          = xfileserver_find_file(&fs, c.file_id);
+            char *buffer                = sv.machine_state.StateRawPackets.buffer;
+
+            // this is a problem
+            if (fc == NULL) {
+                printf("FILE IS UNKNOWN....\n");
+                server_set_state(&sv, SERVER_IDLE);
+                break;
+            }
+
+            printf("OK. FRAG #%ld of FILE %s\n", c.frag_id, c.file_name);
+
+            #if LOG_BUFFERS
+                printf("--------------------\n");
+                printf("%s\n", buffer);
+                printf("--------------------\n");
+            #endif
+            
+            eFileAddFragStatus f = xfileserver_add_fragment(fc, c.frag_id, buffer, c.frag_size);
+            if ( f == FRAG_OK ) 
+            {
+                printf("FRAGMENT INCLUDED SUCCESFULLY.\b");
+            } else
+            {
+                printf("ERROR INCLUDING FRAGMENT");
+            }
+
+            xfileserver_debug(&fs);
+
+            free(buffer); //this clears from state also, so it should not be used anymore.
+                          // TODO: clear whole machine
+            server_set_state(&sv, SERVER_IDLE);
+            break;
+        }
+
 
         default:
         {

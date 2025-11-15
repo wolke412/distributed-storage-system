@@ -42,9 +42,6 @@ func StartREPL(state *ClientState) {
 		case "send":
 			res = HandleSend(state, args)
 
-		case "sendraw":
-			res = HandleSendRaw(state, args)
-
 		case "read":
 			res = ReadPackets(state)
 

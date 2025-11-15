@@ -15,6 +15,7 @@
 
 #include "../args.h"  
 #include "../nettypes.h"  
+#include "../defines.h"  
 
 #include "../fileserver/fs.h"  
 
@@ -77,7 +78,6 @@ typedef struct xPeerIsDeadMessage{
 } xPeerIsDeadMessage;
 
 typedef struct xPeerReportMessage{
-  node_id_t peer_id;
   Address peer_addr;
 } xPeerReportMessage;
 
@@ -90,6 +90,18 @@ typedef struct xResponseFileCreation{
   uint64_t buffer_limit;
 } xResponseFileCreation;
 
+typedef struct xRequestFragmentCreation{
+  char file_name[256];
+  uint64_t file_size;
+  uint64_t file_id;
+  uint8_t fragment_count_total;
+    
+  uint64_t frag_id;
+  uint64_t frag_size;
+} xRequestFragmentCreation;
+
+
+
 //-
 
 typedef enum { // force to uint8_t
@@ -101,12 +113,16 @@ typedef enum { // force to uint8_t
   TYPE_PEER_IS_DEAD              , // do you have what it takes to crush my rat? 
                                    //
 
-  TYPE_REPORT_PEER, 
+  TYPE_REPORT_SELF, 
 
   TYPE_REQUEST_FILE_INDEX, 
 
 
-  TYPE_CREATE_FILE = 10,
+  // -
+  TYPE_CREATE_FILE      = 10,
+  TYPE_STORE_FRAGMENT   = 11,
+
+  TYPE_OK = 200, 
 
 } eMessageType;
 
@@ -121,13 +137,14 @@ typedef struct __attribute((packed)) {
     // ----------------------------------------
     xPeerIsDeadMessage dead_peer;
     // ----------------------------------------
-    xPeerReportMessage report_peer;
+    xPeerReportMessage report_self;
     // ----------------------------------------
     xRequestFileCreation create_file;
     xResponseFileCreation res_create_file;
     // ----------------------------------------
     // xPeerReportMessage report_peer;
     // ----------------------------------------
+    xRequestFragmentCreation create_frag;
 
   } content;
 
@@ -164,9 +181,25 @@ typedef union {
 
   struct StateIndexWaitingPeers { uint64_t connected; } StateIndexWaitingPeers;
 
-  struct StateRawPackets { bool uploading; size_t n_pkts; uint64_t total_size; int client_fd; char *buffer; xRequestFileCreation fc; } StateRawPackets;
-
   struct StateReceivedPacket { xPacket packet; int from_fd; } StateReceivedPacket ;
+
+  struct StateRawPackets { 
+      uint8_t trigger_pkt; 
+      size_t n_pkts; 
+      uint64_t total_size; 
+      int client_fd; 
+
+      xRequestFileCreation fc; 
+      xRequestFragmentCreation fragc;
+
+      char *buffer;  // set by the raw bytes handler
+  } StateRawPackets;
+
+  struct StateHandleNewFile { 
+      xFileContainer *fc;
+      char *buffer; 
+  } StateHandleNewFile;
+
 
 } uMachineState;
 
@@ -176,15 +209,22 @@ typedef enum  {
     SERVER_BOOTING              = 0,
     SERVER_CONNECTING           = 1,
 
-    SERVER_IDLE                 = 2,
-  
     //- 
-    SERVER_BEGIN_OPERATION      ,
+    SERVER_BEGIN_OPERATION      , // branch to role-spefici
+                                  //
+    // - COMMON
+    SERVER_IDLE                 ,
+    SERVER_RECEIVED_PACKET,
+    SERVER_WAITING_RAW_PACKETS,
+    SERVER_RECEIVED_FRAGMENT,
+
 
     // iDX SPECIFIC
     SERVER_INDEX_PRESENT_ITSELF,
     SERVER_INDEX_WAITING_PEERS,
     SERVER_INDEX_HANDLE_NEW_FILE,
+    // file stuff
+        SERVER_INDEX_FANOUT_FRAGMENTS,
 
 
     // non-iDX specifics
@@ -193,9 +233,6 @@ typedef enum  {
 
 
 
-    SERVER_RECEIVED_PACKET,
-
-    SERVER_WAITING_RAW_PACKETS,
 
 
     SERVER_OTHER      = 99
@@ -248,12 +285,12 @@ bool server_is_peerb_connected(const Server *sv);
 
 
 
-int server_dial_peer(Server *sv);
 int server_accept(Server *sv);
 void server_close_socket(Server *sv, int socket);
 
-
+int server_dial(Server *sv, Address * a);
 int server_dial_index(Server *sv);
+int server_dial_peer(Server *sv);
 
 
 void server_index_save_reported_peer(Server *sv, xPacket *packet);
@@ -262,6 +299,10 @@ void server_index_save_reported_peer(Server *sv, xPacket *packet);
 size_t server_send_to_peer_f(Server *sv, xPacket *packet);
 size_t server_send_to_index(Server *sv, xPacket *packet);
 size_t server_send_to_socket(Server *sv, xPacket *packet, int fd);
+
+
+int server_send_large_buffer_to( Server *sv, int fd, int buffer_size, char *fragbuffer, int bucket_size );
+
 
 xPacket server_wait_from_peer_b(Server *sv);
 xPacket server_wait_from_socket(Server *sv, int fd);
@@ -277,9 +318,21 @@ void server_handle_raw_packets(Server *sv);
 // XPACKET SHIT
 // ------------------------------------------------------------
 
-xPacket xpacket_report_peer( Server *sv );
+xPacket xpacket_report_self( Server *sv );
 xPacket xpacket_presentation( Server *sv );
+xPacket xpacket_ok( Server *sv ); 
+xPacket xpacket_send_fragment( Server *sv, xRequestFragmentCreation *frag);
 void xpacket_debug(const xPacket *p);
+
+
+// ------------------------------------------------------------ 
+
+
+void xreqfragcreation_new( xRequestFragmentCreation *fragcreation, xFileContainer *fc, xFragmentNetworkPointer *frag );
+
+// ------------------------------------------------------------ 
+
+void print_state(eServerState st);
 
 #endif // SERVER_H
 
