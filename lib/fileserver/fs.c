@@ -40,8 +40,6 @@ xFileContainer *xfileserver_add_file(
     file->fragments[0].fragment_id = 0;
     file->fragments[1].fragment_id = 0;
     
-    index->file_count++;
-    
     return file;
 }
 
@@ -84,6 +82,22 @@ xFileContainer *xfileserver_find_file( xFileServer *idx, uint64_t id ) {
     for (int i = 0; i < idx->file_count; i++) {
         f = idx->files + i;
         if ( f->file_id == id ) break;
+        f = NULL;
+    }
+
+    return f;
+}
+
+xFileContainer *xfileserver_find_file_by_name( xFileServer *idx, char *name ) {
+
+    xFileContainer *f = NULL;
+
+    name[255] = '\0'; // make sure last character is 
+
+    for (int i = 0; i < idx->file_count; i++) {
+        f = idx->files + i;
+        if ( strcmp( f->file_name, name ) == 0 ) break;
+        f = NULL;
     }
 
     return f;
@@ -127,7 +141,7 @@ void xfileserver_debug(const xFileServer *fs) {
         return;
     }
 
-    printf("\n=== xLocalFileIndex Debug ===\n");
+    printf("\n=== FILE STORAGE Debug ===\n");
     printf("Total files: %u\n\n", fs->file_count);
 
     for (uint16_t i = 0; i < fs->file_count; i++) {

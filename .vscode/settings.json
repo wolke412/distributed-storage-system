@@ -4,6 +4,8 @@
     "array": "c",
     "functional": "c",
     "tuple": "c",
-    "nettypes.h": "c"
+    "nettypes.h": "c",
+    "args.h": "c",
+    "fs.h": "c"
   }
 }

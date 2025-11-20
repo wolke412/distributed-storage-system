@@ -86,6 +86,7 @@ xFileContainer *xfileserver_add_file(
 );
 
 
+
 eFileAddFragStatus xfileserver_add_fragment(
     xFileContainer *file,
     uint8_t fragment_id,
@@ -97,6 +98,7 @@ void xfileserver_free_file(xFileContainer *file);
 void xfileserver_free_fs(xFileServer *fs);
 
 xFileContainer *xfileserver_find_file( xFileServer *idx, uint64_t id );
+xFileContainer *xfileserver_find_file_by_name( xFileServer *idx, char *name );
 
 // ------------------------------------------------------------
 void xfileserver_debug(const xFileServer *fs);

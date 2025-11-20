@@ -21,7 +21,6 @@ func StartREPL(state *ClientState) {
 
 		input := state.Console.Prompt()
 
-
 		line := strings.TrimSpace(input)
 		if line == "" {
 			continue
@@ -31,7 +30,7 @@ func StartREPL(state *ClientState) {
 		cmd := parts[0]
 		args := parts[1:]
 
-		state.Console.AddLog( " > " + paint.White( line ) )
+		state.Console.AddLog(" > " + paint.White(line))
 
 		var res *CommandResult
 
@@ -42,21 +41,20 @@ func StartREPL(state *ClientState) {
 		case "send":
 			res = HandleSend(state, args)
 
-		case "read":
-			res = ReadPackets(state)
+		case "request", "req", "r":
+			res = HandleRequest(state, args)
 
 		case "state":
 			msg := fmt.Sprintf("Current state: %v, Connected to: %s", state.State, state.ConnectedTo)
 			res = Success(msg)
 
 		case "close":
-			err :=state.Conn.Close()
+			err := state.Conn.Close()
 			if err != nil {
 				res = Failure("Error closing connection.", err)
 			} else {
 				res = Success("Connection closed successfully")
 			}
-
 
 		case "exit", "quit":
 			fmt.Println("Exiting...")
@@ -67,8 +65,7 @@ func StartREPL(state *ClientState) {
 		}
 
 		if res != nil {
-			state.Console.AddLog( res.PrettyString() )
+			state.Console.AddLog(res.PrettyString())
 		}
 	}
 }
-

@@ -99,7 +99,17 @@ typedef struct xRequestFragmentCreation{
   uint64_t frag_id;
   uint64_t frag_size;
 } xRequestFragmentCreation;
+//-
 
+typedef struct xRequestFile{
+  char name[256];
+} xRequestFile;
+
+typedef struct xResponseRequestFile{
+  uint64_t  file_size;
+  uint64_t  file_id;
+  uint8_t   fragment_count_total;
+} xResponseRequestFile;
 
 
 //-
@@ -119,10 +129,16 @@ typedef enum { // force to uint8_t
 
 
   // -
-  TYPE_CREATE_FILE      = 10,
-  TYPE_STORE_FRAGMENT   = 11,
+  TYPE_CREATE_FILE        = 10,
+  TYPE_STORE_FRAGMENT     = 11,
 
-  TYPE_OK = 200, 
+  TYPE_REQUEST_FILE       = 15,
+  TYPE_RESPONSE_FILE      = 16,
+
+  TYPE_REQUEST_FRAG       = 20,
+
+  TYPE_OK     = 200, 
+  TYPE_NOT_OK = 400, 
 
 } eMessageType;
 
@@ -142,6 +158,8 @@ typedef struct __attribute((packed)) {
     xRequestFileCreation create_file;
     xResponseFileCreation res_create_file;
     // ----------------------------------------
+    xRequestFile          request_file;
+    xResponseRequestFile  request_file_response;
     // xPeerReportMessage report_peer;
     // ----------------------------------------
     xRequestFragmentCreation create_frag;
@@ -171,10 +189,6 @@ typedef struct {
 // ------------------------------------------------------------ 
 
 
-
-
-
-
 typedef union {
     
   struct StateConnecting { node_id_t waiting_peer_id; } StateConnecting;
@@ -199,6 +213,8 @@ typedef union {
       xFileContainer *fc;
       char *buffer; 
   } StateHandleNewFile;
+  
+  struct StateRequestedFile { xRequestFile f; int from_fd; int file_id; uint64_t file_size; int fragment_count } StateRequestedFile;
 
 
 } uMachineState;
@@ -218,6 +234,7 @@ typedef enum  {
     SERVER_WAITING_RAW_PACKETS,
     SERVER_RECEIVED_FRAGMENT,
 
+    SERVER_WAIT_REQUEST_FRAGMENTS,
 
     // iDX SPECIFIC
     SERVER_INDEX_PRESENT_ITSELF,
@@ -225,7 +242,7 @@ typedef enum  {
     SERVER_INDEX_HANDLE_NEW_FILE,
     // file stuff
         SERVER_INDEX_FANOUT_FRAGMENTS,
-
+        SERVER_INDEX_REQUEST_FRAGMENTS,
 
     // non-iDX specifics
     SERVER_WAIT_INDEX_GOSSIP,
@@ -293,6 +310,9 @@ int server_dial_index(Server *sv);
 int server_dial_peer(Server *sv);
 
 
+int server_is_index(Server *sv);
+
+
 void server_index_save_reported_peer(Server *sv, xPacket *packet);
 
 
@@ -313,6 +333,10 @@ node_id_t server_wait_client_presentation(Server *sv, int c);
 void server_onxpacket(Server *sv);
 void server_handle_raw_packets(Server *sv);
 
+int server_send_ok(Server *sv, int to);
+int server_send_not_ok(Server *sv, int to);
+int server_wait_ok(Server *sv, int to); 
+
 
 // ------------------------------------------------------------
 // XPACKET SHIT
@@ -321,7 +345,12 @@ void server_handle_raw_packets(Server *sv);
 xPacket xpacket_report_self( Server *sv );
 xPacket xpacket_presentation( Server *sv );
 xPacket xpacket_ok( Server *sv ); 
+xPacket xpacket_not_ok( Server *sv ); 
 xPacket xpacket_send_fragment( Server *sv, xRequestFragmentCreation *frag);
+xPacket xpacket_request_file_response( Server *sv, xFileContainer *fc);
+
+
+
 void xpacket_debug(const xPacket *p);
 
 

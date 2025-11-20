@@ -136,7 +136,7 @@ int server_dial(Server *sv, Address *a) {
 int server_dial_peer(Server *sv) {
     if (!sv) return 0;
     
-    printf("#%ld -> #%ld @ _:%d\n",sv->me.node_id, sv->peer_f.node_id, sv->peer_f.ip.port);
+    printf("NODE #%ld -> NODE #%ld \n", sv->me.node_id, sv->peer_f.node_id );
 
     int fd = tcp_open(&sv->peer_f.ip);
 
@@ -257,8 +257,13 @@ int server_send_large_buffer_to( Server *sv, int fd, int buffer_size, char *buff
     }
 
     return 1;
-}
 
+
+}
+int server_is_index(Server *sv) 
+{
+    return sv->index.node_id == sv->me.node_id;
+}
 //-
 //
 //
@@ -356,6 +361,18 @@ xPacket xpacket_ok( Server *sv )
     return p;
 }
 // ------------------------------------------------------------
+xPacket xpacket_not_ok( Server *sv ) 
+{
+    xPacket p = {0};
+
+    p.bytes.comm.sender_id  = sv->me.node_id;
+    p.bytes.comm.type       = TYPE_NOT_OK;
+
+    p.size = sizeof( p.bytes.comm ) + sizeof(p.size);
+
+    return p;
+}
+// ------------------------------------------------------------
 xPacket xpacket_presentation( Server *sv ) 
 {
     xPacket p = {0};
@@ -382,6 +399,24 @@ xPacket xpacket_send_fragment( Server *sv, xRequestFragmentCreation *frag)
     return p;
 }
 // ------------------------------------------------------------
+xPacket xpacket_request_file_response( Server *sv, xFileContainer *fc)
+{
+
+    xPacket p = {0};
+    p.bytes.comm.sender_id  = sv->me.node_id;
+
+    p.bytes.comm.type       = TYPE_RESPONSE_FILE;
+
+    p.bytes.comm.content.request_file_response.file_id = fc->file_id;
+    p.bytes.comm.content.request_file_response.file_size = fc->size;
+    p.bytes.comm.content.request_file_response.fragment_count_total = fc->fragment_count_total;
+
+    p.size = sizeof( p.bytes.comm ) + sizeof(p.size);
+
+    return p;
+
+}
+// ------------------------------------------------------------
 void xpacket_debug(const xPacket *p) {
     if (!p) {
         printf("xPacket: (null)\n");
@@ -394,6 +429,26 @@ void xpacket_debug(const xPacket *p) {
         printf("\\x%02X", c);
     }
     printf("\"\n");
+}
+// ------------------------------------------------------------
+//
+int server_send_ok(Server *sv, int to) 
+{
+    xPacket p = xpacket_ok(sv);
+    return server_send_to_socket(sv, &p, to);
+}
+
+int server_send_not_ok(Server *sv, int to) 
+{
+    xPacket p = xpacket_not_ok(sv);
+    return server_send_to_socket(sv, &p, to);
+}
+
+int server_wait_ok(Server *sv, int to) 
+{
+    xPacket p = server_wait_from_socket( sv, to);
+
+    return p.bytes.comm.type == TYPE_OK;    
 }
 
 
@@ -473,6 +528,10 @@ void print_state(eServerState st) {
         case SERVER_INDEX_FANOUT_FRAGMENTS:
             printf("SERVER_INDEX_FANOUT_FRAGMENTS");
             break;
+            
+        case SERVER_INDEX_REQUEST_FRAGMENTS:
+            printf("SERVER_INDEX_REQUEST_FRAGMENTS");
+            break;
 
         case SERVER_WAIT_INDEX_GOSSIP:
             printf("SERVER_WAIT_INDEX_GOSSIP");
@@ -481,6 +540,11 @@ void print_state(eServerState st) {
         case SERVER_REPORT_KNOWLEDGE_TO_INDEX:
             printf("SERVER_REPORT_KNOWLEDGE_TO_INDEX");
             break;
+
+        case SERVER_WAIT_REQUEST_FRAGMENTS:
+            printf("SERVER_WAIT_REQUEST_FRAGMENTS");
+            break;
+
 
         case SERVER_OTHER:
             printf("SERVER_OTHER");

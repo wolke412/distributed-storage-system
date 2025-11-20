@@ -48,8 +48,8 @@ void xfilenetindex_add_file(xFileNetworkIndex *net, xFileInNetwork *file) {
 /**
  *  Finds the file based on its id
  * ------------------------------------------------------------ 
- *  Note:   Since ids are incremental, this could use BS
- *          the list will always be ordered. 
+ *  Note:   Since ids are incremental, this could use BS.
+ *          The list will always be ordered. 
  */
 xFileInNetwork *xfilenetindex_find_file(xFileNetworkIndex *net, uint16_t file_id) {
     if (!net) return NULL;
@@ -69,7 +69,7 @@ void xfilenetindex_debug(const xFileNetworkIndex *net) {
         return;
     }
 
-    printf("\n=== xFileNetworkIndex Debug ===\n");
+    printf("\n=== FILE INDEX Debug ===\n");
     printf("Total files: %u\n\n", net->file_count);
 
     if (!net->files) {
