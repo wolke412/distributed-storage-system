@@ -23,6 +23,10 @@
 #define CLIENT_NODE_ID              ((node_id_t)((2<<64) - 1))
 
 
+// returns current milliseconds
+uint64_t current_millis();
+
+
 typedef enum  {
     UNAUTHENTICATED,
     IDLE,
@@ -99,7 +103,8 @@ typedef struct xRequestFragmentCreation{
   uint64_t frag_id;
   uint64_t frag_size;
 } xRequestFragmentCreation;
-//-
+
+// -
 
 typedef struct xRequestFile{
   char name[256];
@@ -110,6 +115,22 @@ typedef struct xResponseRequestFile{
   uint64_t  file_id;
   uint8_t   fragment_count_total;
 } xResponseRequestFile;
+
+typedef struct xDeliverFragmentTo{
+  uint64_t  file_id;
+  uint64_t  frag_id;
+  Address   to;
+} xDeliverFragmentTo;
+
+typedef struct xDeclareFragmentTransport{
+  uint64_t file_id;
+  uint64_t frag_id;
+  uint64_t frag_size;
+  uint64_t file_size;
+} xDeclareFragmentTransport;
+
+// -
+
 
 
 //-
@@ -136,9 +157,10 @@ typedef enum { // force to uint8_t
   TYPE_RESPONSE_FILE      = 16,
 
   TYPE_REQUEST_FRAG       = 20,
+  TYPE_DECLARE_FRAG       = 21,
 
   TYPE_OK     = 200, 
-  TYPE_NOT_OK = 400, 
+  TYPE_NOT_OK = 220, 
 
 } eMessageType;
 
@@ -158,8 +180,10 @@ typedef struct __attribute((packed)) {
     xRequestFileCreation create_file;
     xResponseFileCreation res_create_file;
     // ----------------------------------------
-    xRequestFile          request_file;
-    xResponseRequestFile  request_file_response;
+    xRequestFile              request_file;
+    xResponseRequestFile      request_file_response;
+    xDeliverFragmentTo        deliver_fragment_to;
+    xDeclareFragmentTransport declare_fragment_transport;
     // xPeerReportMessage report_peer;
     // ----------------------------------------
     xRequestFragmentCreation create_frag;
@@ -214,7 +238,17 @@ typedef union {
       char *buffer; 
   } StateHandleNewFile;
   
-  struct StateRequestedFile { xRequestFile f; int from_fd; int file_id; uint64_t file_size; int fragment_count } StateRequestedFile;
+  struct StateRequestedFile { 
+    xRequestFile f; 
+    int from_fd; 
+    int file_id; 
+    uint64_t file_size; 
+    int fragment_count ;
+    int fragment_found;
+    node_id_t deliver_to;    
+
+    char *buffer;
+  } StateRequestedFile;
 
 
 } uMachineState;
@@ -274,9 +308,12 @@ typedef struct {
     xPeerConnection peer_b;     // Backward peer
                                 //
     eServerState state;
+    uint64_t state_changed_at;
     uMachineState machine_state;  
 
     uint64_t net_size;
+
+    uint64_t death_count;
 
     // 
     xPeerConnection index;
@@ -296,6 +333,7 @@ int server_init(Server *sv, const Args *opts);
 int server_open(Server *sv);
 void server_close(Server *sv);
 void server_set_state(Server *sv, eServerState st);
+uint64_t server_millis_in_state(Server *sv);
 
 bool server_is_peerf_connected(const Server *sv);
 bool server_is_peerb_connected(const Server *sv);
@@ -321,7 +359,8 @@ size_t server_send_to_index(Server *sv, xPacket *packet);
 size_t server_send_to_socket(Server *sv, xPacket *packet, int fd);
 
 
-int server_send_large_buffer_to( Server *sv, int fd, int buffer_size, char *fragbuffer, int bucket_size );
+int server_send_large_buffer_to( Server *sv, int fd, int buffer_size, char *fragbuffer);
+int server_wait_large_buffer_from( Server *sv, int fd, int buffer_size, char *file_buffer );
 
 
 xPacket server_wait_from_peer_b(Server *sv);
@@ -364,4 +403,3 @@ void xreqfragcreation_new( xRequestFragmentCreation *fragcreation, xFileContaine
 void print_state(eServerState st);
 
 #endif // SERVER_H
-

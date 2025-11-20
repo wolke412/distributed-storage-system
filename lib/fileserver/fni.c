@@ -55,7 +55,8 @@ xFileInNetwork *xfilenetindex_find_file(xFileNetworkIndex *net, uint16_t file_id
     if (!net) return NULL;
 
     xFileInNetwork *curr = net->files;
-    while (curr) {
+    while (curr)
+    {
         if (curr->file_id == file_id)
             return curr;
         curr = curr->next;
@@ -64,7 +65,8 @@ xFileInNetwork *xfilenetindex_find_file(xFileNetworkIndex *net, uint16_t file_id
 }
 
 void xfilenetindex_debug(const xFileNetworkIndex *net) {
-    if (!net) {
+    if (!net)
+    {
         printf("[xfilenetindex] Network index is NULL\n");
         return;
     }
@@ -72,7 +74,8 @@ void xfilenetindex_debug(const xFileNetworkIndex *net) {
     printf("\n=== FILE INDEX Debug ===\n");
     printf("Total files: %u\n\n", net->file_count);
 
-    if (!net->files) {
+    if (!net->files)
+    {
         printf("  [xfilenetindex] No files registered.\n\n");
         return;
     }

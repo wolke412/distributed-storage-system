@@ -6,4 +6,5 @@
 #define MINIMAL_SIZE_FOR_SPLIT              (100)
 #define REDUNDANCY                          (2)
 // ------------------------------------------------------------ 
+#define SERVER_BUCKET_SIZE                 (4096)
 

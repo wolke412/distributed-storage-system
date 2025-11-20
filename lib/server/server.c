@@ -37,8 +37,9 @@ int server_init(Server *sv, const Args *opts) {
 
     // --------------------------------------------------
     sv->state       = SERVER_BOOTING;
-    sv->net_size    = opts->netsize;
     sv->peers       = malloc( sizeof(int) * sv->net_size );
+    sv->net_size    = opts->netsize;
+    sv->death_count = 0;
 
     sv->listener_fd = -1;
     sv->client_fd   = -1;
@@ -99,17 +100,26 @@ void server_set_state(Server *sv, eServerState st) {
 
     if (sv) sv->state = st;
 
+    sv->state_changed_at = current_millis();
+
     // required state swaps
     switch (st)  {
         case SERVER_INDEX_WAITING_PEERS: {
             sv->machine_state.StateIndexWaitingPeers.connected = 0;
         }
+
         default: {
             // nothing to do
         }
     }
 
 }
+
+uint64_t server_millis_in_state(Server *sv)
+{
+    return current_millis() - sv->state_changed_at;
+}
+
 // ------------------------------------------------------------
 // Check peer connection states
 // ------------------------------------------------------------
@@ -214,13 +224,12 @@ size_t server_send_to_index(Server *sv, xPacket *packet) {
 // ------------------------------------------------------------
 size_t server_send_to_socket(Server *sv, xPacket *packet, int fd) {
     return tcp_send( fd , packet->bytes.raw , packet->size );
-
 }
 // ------------------------------------------------------------
-int server_send_large_buffer_to( Server *sv, int fd, int buffer_size, char *buffer, int bucket_size )
+int server_send_large_buffer_to( Server *sv, int fd, int buffer_size, char *buffer)
 {
     printf("SENDING LARGE BUFFER\n");
-    int n_packets = buffer_size / bucket_size + 1;
+    int n_packets = buffer_size / SERVER_BUCKET_SIZE + 1;
     
     xPacket x = {0};
     char* bucket = (char*)&x.bytes.raw;
@@ -232,8 +241,8 @@ int server_send_large_buffer_to( Server *sv, int fd, int buffer_size, char *buff
     {
         printf("SENDING PART %d of %d\n", i+1, n_packets);
 
-		int st  = i * bucket_size; 
-		int end = st + bucket_size; 
+		int st  = i * SERVER_BUCKET_SIZE; 
+		int end = st + SERVER_BUCKET_SIZE; 
 		if ( end > buffer_size )
         {
 			end = buffer_size;
@@ -255,11 +264,36 @@ int server_send_large_buffer_to( Server *sv, int fd, int buffer_size, char *buff
 
         printf("TOTAL of %d bytes sent.\n", curptr);
     }
+    return 1;
+}
+
+
+int server_wait_large_buffer_from( Server *sv, int fd, int buffer_size, char *file_buffer )
+{
+    printf("WAITING LARGE BUFFER\n");
+    int n_packets = buffer_size / SERVER_BUCKET_SIZE + 1;
+
+    printf("WAITING RAW PACKETS\n");
+    printf("size=%d n=%d \n", buffer_size, n_packets );
+
+    int populated = 0;
+    for (int i = 0; i < n_packets; i++)
+    {
+        xPacket p = server_wait_from_socket(&sv, fd);
+
+        memcpy(file_buffer + populated, p.bytes.raw, p.size);
+
+        populated += p.size;
+
+        printf("RAW : %.2f%% bytes.\n", (100 * (float)populated / (float)buffer_size));
+    }
+
+    printf("DONE\n");
 
     return 1;
-
-
 }
+
+
 int server_is_index(Server *sv) 
 {
     return sv->index.node_id == sv->me.node_id;

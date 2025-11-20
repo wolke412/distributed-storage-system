@@ -6,6 +6,7 @@
     "tuple": "c",
     "nettypes.h": "c",
     "args.h": "c",
-    "fs.h": "c"
+    "fs.h": "c",
+    "stdint.h": "c"
   }
 }
