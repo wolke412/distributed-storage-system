@@ -2,19 +2,40 @@
 
 int xprocedure_send_request_fragment( Server *sv, Address *to , int file_id, int fragment_id, Address *deliver_to )
 {
+  printf("CONNECTING TO :%d\n", to->port);
+
   int fd = server_dial(sv, to);
   if (fd <= 0)
   {
     return fd;
   }
 
+  xPacket presentation = xpacket_presentation(sv);
+  server_send_to_socket(sv, &presentation, fd);
+  if ( ! server_wait_ok( sv, fd ) ) {
+    printf("FRAGMENT REFUSED.\n");
+    return -1;
+  }
+
   xPacket pkt = {0};
 
   pkt.bytes.comm.sender_id = sv->me.node_id;
+  pkt.bytes.comm.type       = TYPE_REQUEST_FRAG;
 
+  pkt.bytes.comm.content.deliver_fragment_to.file_id  = file_id;
+  pkt.bytes.comm.content.deliver_fragment_to.frag_id  = fragment_id;
+  pkt.bytes.comm.content.deliver_fragment_to.to       = *deliver_to;
+  pkt.size = sizeof(pkt.bytes.comm) + sizeof(pkt.size);
 
+  printf("SENDING FRAG DELIVER REQUEST.\n");
+  server_send_to_socket(sv, &pkt, fd);
 
+  if ( ! server_wait_ok( sv, fd ) ) {
+    printf("FRAGMENT REFUSED.\n");
+    return -2;
+  }
 
+  server_close_socket( sv, fd );
 }
 
 

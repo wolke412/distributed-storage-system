@@ -1,5 +1,25 @@
 package cmd
 
+import (
+	"fmt"
+	"net"
+)
+
+func readLargeBuffer(conn net.Conn, bufferSize int) ([]byte, error) {
+	buf := make([]byte, bufferSize)
+	populated := 0
+
+	for populated < bufferSize {
+		n, err := conn.Read(buf[populated:])
+		if err != nil {
+			return nil, err
+		}
+		populated += n
+	}
+
+	return buf, nil
+}
+
 func HandleRequest(state *ClientState, args []string) *CommandResult {
 
 	if state.State != StateConnected || state.Conn == nil {
@@ -45,6 +65,15 @@ func HandleFileRequest(state *ClientState, args []string) *CommandResult {
 	p := Packet(RequestFilePacket, &pkt)
 
 	ok := sendBytes(state, p.Serialize(), "file")
+
+	c, err := ReadPacket[FileResponsePacket](state)
+
+	if err != nil {
+		return Failure("Error reading package.", err)
+	}
+
+	state.Console.AddLog(fmt.Sprintf("TYPE = %d \n", c.Type))
+	state.Console.Draw()
 
 	return ok
 

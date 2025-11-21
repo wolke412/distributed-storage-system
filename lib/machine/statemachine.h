@@ -2,8 +2,8 @@
 #define STATEMACHINE_H
 
 
-#include "server/server.h"
-#include "fileserver/fs.h"
+#include "../server/server.h"
+#include "../fileserver/fs.h"
 
 
 

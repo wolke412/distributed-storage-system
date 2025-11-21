@@ -59,7 +59,8 @@ func HandleSend(state *ClientState, args []string) *CommandResult {
 
 func HandleAuth(state *ClientState) *CommandResult {
 
-	p := Packet(PresentItself, nil)
+	p := Packet[Empty](PresentItself, nil)
+
 	dbg := fmt.Sprintf(" { sender_id: %u, type: %d } ", p.SenderID, p.Type)
 
 	state.Console.AddLog(dbg)
@@ -104,7 +105,7 @@ func HandleFileTransmission(state *ClientState, args []string) *CommandResult {
 		return Failure("Failed to read file", err)
 	}
 
-	p := Packet(CreateFilePacket, &pkt)
+	p := Packet[FileDeclarationPacket](CreateFilePacket, &pkt)
 
 	ok := sendBytes(state, p.Serialize(), "file")
 

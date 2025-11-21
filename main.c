@@ -372,6 +372,7 @@ int main(int argc, char **argv) {
         case SERVER_RECEIVED_PACKET:
         {
             xPacket p = sv.machine_state.StateReceivedPacket.packet;
+            int fd = sv.machine_state.StateReceivedPacket.from_fd;
             printf("RECEIVED NEW PACKET OF TYPE=%d\n", p.bytes.comm.type);
             switch (p.bytes.comm.type)
             {
@@ -440,7 +441,6 @@ int main(int argc, char **argv) {
 
             case TYPE_REQUEST_FILE: 
             {
-                int fd = sv.machine_state.StateReceivedPacket.from_fd;
                 xRequestFile f = p.bytes.comm.content.request_file;
 
                 printf("\nREQUESTED FILE: \t %s\n", f.name);
@@ -524,6 +524,16 @@ int main(int argc, char **argv) {
             case TYPE_REQUEST_FRAG: 
             {
                 printf("SOMEONE REQUESTED FRAGMENT.\n");
+                int fragid = p.bytes.comm.content.deliver_fragment_to.frag_id;
+                int fileid = p.bytes.comm.content.deliver_fragment_to.file_id;
+                Address to = p.bytes.comm.content.deliver_fragment_to.to;
+                printf("FILE %d \t FRAG \t %d TO : %d ", fileid, fragid, to.port);
+
+                server_send_ok( &sv, fd );
+
+                int r = xprocedure_send_fragment( &sv, &fs, fileid, fragid, &to );
+
+                server_set_state(&sv, SERVER_IDLE);
                 break;
             }
 
@@ -836,24 +846,28 @@ weird:
             {
                 xFragmentNetworkPointer *frag = frags[i];
 
+                if ( frag->node_id == deliver_to ) continue;
 
                 Address *deliver_to_addr = sv.index_data->peer_ips + deliver_to - 1;
                 if (frag->node_id == sv.me.node_id) 
                 {
                     int r = xprocedure_send_fragment( &sv, &fs, file_id, frag->fragment, deliver_to_addr );
-
                     printf("SENT FRAGMENT #%d TO %ld : %d\n", frag->fragment, deliver_to, r);
                 }
+                else {
 
-                int offset = frag->node_id - 1;
-                Address *addr = sv.index_data->peer_ips + offset;
-                if ( addr == NULL ) 
-                {
-                    printf("OOPS... THIS DUMB BITCH IS DEAD. RIP. \n");
+
+                    int offset = frag->node_id - 1;
+                    Address *addr = sv.index_data->peer_ips + offset;
+
+                    if ( addr == NULL ) 
+                    {
+                        printf("OOPS... THIS DUMB BITCH IS DEAD. RIP. \n");
+                    }
+
+                    printf("ASKING FRAGMENT #%d TO NODE %ld DELIVER TO %ld\n", frag->fragment, frag->node_id, deliver_to);
+                    int r = xprocedure_send_request_fragment( &sv, addr, file_id, frag->fragment, deliver_to_addr);
                 }
-
-
-                printf("ASKING FRAGMENT #%d TO NODE %ld DELIVER TO %ld\n", frag->fragment, frag->node_id, deliver_to);
             }
 
             free(frags);
@@ -913,69 +927,96 @@ weird:
             char* buf = sv.machine_state.StateRequestedFile.buffer;
 
             // printf("IM WAITING MY %d/%d FRAGMENTS.\n", d, w);
+            int file_id = sv.machine_state.StateRequestedFile.file_id;
+            int file_sz = sv.machine_state.StateRequestedFile.file_size;
 
-            tcp_socket c = server_accept(&sv);
+            if ( w - d == 1) {
+                printf("TRYING IN MYSELF.\n", d, w);
 
-            if (c > 0)
-            {
-                printf("new connection... waiting identification.\n");
-
-                node_id_t N = server_wait_client_presentation(&sv, c);
-
-                if (!N)
+                // if this piece of shit is in my memory
+                xFileContainer *fc = xfileserver_find_file( &fs, file_id );
+                if (fc != NULL)
                 {
-                    printf("FAILED PRESENTATION PROTOCOL.\n");
-                    tcp_close(c);
-                    break;
-                }
-                else
-                {
+                    // if I exist, the [0] is what I need. Position 1 is just for backup.
+                    xFileFragment *fp = fc->fragments;
+                    
+                    int size_per_frag = fc->size / w;                    
+                    int offset = size_per_frag * (fp->fragment_id-1);
+                    printf("FRAG #%d \t SIZE:  %d \t OFFSET %d \n", fp->fragment_id, fp->fragment_size, offset);
 
-                    printf("PRESENTED AS NODE #%lu.\n", N);
-                    xPacket pkt_ok = xpacket_ok(&sv);
-                    server_send_to_socket( &sv, &pkt_ok, c );  
-
-                    printf("Waiting...\n");
-
-                    xPacket p = server_wait_from_socket(&sv, c);
-
-                    if (p.size == 0)
-                    {
-                        printf("prolly closed by peer.\n");
-                        break;
-                    }
-
-                    printf("RECEIVED PACKET OF TYPE %d \n", p.bytes.comm.type);
-
-                    server_send_ok(&sv, c);
-
-                    // TODO: this has no error validation, fix it
-                    int frag_size   = p.bytes.comm.content.declare_fragment_transport.frag_size;
-                    int file_size   = p.bytes.comm.content.declare_fragment_transport.file_size;
-                    int frag_id     = p.bytes.comm.content.declare_fragment_transport.frag_id;
-                    char *buffer = (char *) malloc( frag_size * sizeof(char) );
-                    int e = server_wait_large_buffer_from(&sv, c, frag_size, buffer);
-
-                    server_send_ok(&sv, c);
-                    server_close_socket(&sv, c);
-
-                    int size_per_frag = sv.machine_state.StateRequestedFile.file_size / w;                    
-                    int offset = size_per_frag * (frag_id-1);
-                    printf("FRAG #%d \t SIZE:  %d \t OFFSET %d \n", frag_id, frag_size, offset);
-                    memcpy(buf + offset, buffer, frag_size );
-
-                    buf[ file_size - 1 ] = '\n';
-
-                    printf("+ -- \n");
-                    printf("BUFFER: %s \n", buf);
-                    printf("+ -- \n");
+                    memcpy(buf + offset, fp->fragment_bytes, fp->fragment_size );
 
                     sv.machine_state.StateRequestedFile.fragment_found++;
-                    // free(buffer);
                 }
+            }
 
-            }            
+            if ( w != d) {
+                tcp_socket c = server_accept(&sv);
 
+                if (c > 0)
+                {
+                    printf("new connection... waiting identification.\n");
+
+                    node_id_t N = server_wait_client_presentation(&sv, c);
+
+                    if (!N)
+                    {
+                        printf("FAILED PRESENTATION PROTOCOL.\n");
+
+                        break;
+                    }
+                    else
+                    {
+
+                        printf("PRESENTED AS NODE #%lu.\n", N);
+                        xPacket pkt_ok = xpacket_ok(&sv);
+                        server_send_to_socket(&sv, &pkt_ok, c);
+
+                        printf("Waiting...\n");
+
+                        xPacket p = server_wait_from_socket(&sv, c);
+
+                        if (p.size == 0)
+                        {
+                            printf("prolly closed by peer.\n");
+                            break;
+                        }
+
+                        printf("RECEIVED PACKET OF TYPE %d \n", p.bytes.comm.type);
+
+                        server_send_ok(&sv, c);
+
+                        // TODO: this has no error validation, fix it
+                        int frag_size = p.bytes.comm.content.declare_fragment_transport.frag_size;
+                        int file_size = p.bytes.comm.content.declare_fragment_transport.file_size;
+                        int frag_id = p.bytes.comm.content.declare_fragment_transport.frag_id;
+                        char *buffer = (char *)malloc(frag_size * sizeof(char));
+                        int e = server_wait_large_buffer_from(&sv, c, frag_size, buffer);
+
+                        server_send_ok(&sv, c);
+                        server_close_socket(&sv, c);
+
+                        int size_per_frag = sv.machine_state.StateRequestedFile.file_size / w;
+                        int offset = size_per_frag * (frag_id - 1);
+                        printf("FRAG #%d \t SIZE:  %d \t OFFSET %d \n", frag_id, frag_size, offset);
+                        memcpy(buf + offset, buffer, frag_size);
+
+                        sv.machine_state.StateRequestedFile.fragment_found++;
+                        free(buffer);
+                    }
+                }
+                    break;
+            } 
+
+            printf("------------------------------------------------------------\n");
+            printf(" BUFFER:\n %s \n", buf);
+            printf("------------------------------------------------------------\n");
+
+            int client = sv.machine_state.StateRequestedFile.from_fd;
+
+            server_send_large_buffer_to(&sv, client, file_sz, buf );
+
+            server_set_state(&sv, SERVER_IDLE);
 
             break;
         }
