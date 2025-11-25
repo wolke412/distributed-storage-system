@@ -29,7 +29,7 @@ int server_init(Server *sv, const Args *opts) {
     sv->peer_f.status.open = false;
 
     // Backward peer is unknown yet.
-    sv->peer_b.node_id = (sv->me.node_id + opts->netsize - 1) % opts->netsize;
+    sv->peer_b.node_id = (sv->me.node_id - 2 + opts->netsize) % opts->netsize + 1;
     sv->peer_b.stream_fd = -1;
     sv->peer_b.status.open = false;
 
@@ -353,6 +353,15 @@ xPacket server_wait_from_peer_b(Server *sv) {
 }
 
 
+int server_is_valid_node(Server *sv, node_id_t n) {
+
+    if ( n == sv->me.node_id) return 1;
+
+    int i = n - 1;
+    Address *a = sv->index_data->peer_ips+i;
+
+    return a->port != 0;
+}
 
 void server_index_save_reported_peer(Server *sv, xPacket *p) {
 

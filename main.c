@@ -226,7 +226,7 @@ int main(int argc, char **argv) {
 
                 for (int i = 0; i < sv.net_size - 1; i++)
                 {
-                    Address a = *(sv.index_data->peer_ips + i);
+                    Address a = *(sv.index_data->peer_ips+i);
                     printf("NODE #%d -> :%d\n", i + 1, a.port);
                 }
             }
@@ -387,10 +387,10 @@ int main(int argc, char **argv) {
             }
 
             // auto kill for testing
-            if ( sv.me.node_id == 2)
-            {
-                exit(1);
-            }
+            // if ( sv.me.node_id == 2)
+            // {
+            //     exit(1);
+            // }
 
             break;
         }
@@ -698,38 +698,50 @@ int main(int argc, char **argv) {
 
             for ( int i = 0; i < fragcount; i++ ) 
             {
-                int fragmentsz = (i+1) == fragcount ? fragsz + remain : fragsz;
+                int fragmentsz = (i+1) == fragcount 
+                    ? fragsz + remain 
+                    : fragsz;
                    
                 while (1) {
-                    // known peers is NET_SIZE - 1 (this one is myself)
-                    if ( (i + internaloffset) > (sv.index_data->known_peers) ) {
-                        // this is an inconsistency, netsize is less than active peers;
-                        goto weird;
+                    if ( (i+internaloffset) >= (sv.index_data->known_peers) ) {
+                        break;
                     }
 
                     Address *a = sv.index_data->peer_ips + i + internaloffset;
 
-                    if ( a == NULL ) {
+                    if ( a->port == 0 ) {
                         printf("INCREASING OFFSET\n");
                         internaloffset++;
                         continue;
                     }
+
+                    printf("FOUND VALID PEER AT :%d\n", a->port);
+
                     break;
                 }
 
                 int node = i + internaloffset;
 
                 printf("Fragment #%d size %d\n", i, fragmentsz);
-                for (int j = 0; j < REDUNDANCY; j++) 
+
+                int j = 0;
+                int tries = 0;
+                while (j < REDUNDANCY && tries < sv.index_data->known_peers)
                 {
-                    node_id_t nid = (node + j) % sv.net_size;
-                    nid += 1; // nodes starts at 1
-                              
+                    node_id_t nid = (node + tries++) % (sv.net_size + sv.death_count); // original count
+                    nid += 1; 
+
+                    if (!server_is_valid_node(&sv, nid)) continue;
+
                     printf("\tFragment #%d into node %ld\n", i, nid);
-                    f->fragments[i * REDUNDANCY + j].fragment    = i + 1;
-                    f->fragments[i * REDUNDANCY + j].size        = fragmentsz;
-                    f->fragments[i * REDUNDANCY + j].node_id     = nid;
+                    f->fragments[i * REDUNDANCY + j].fragment = i + 1;
+                    f->fragments[i * REDUNDANCY + j].size = fragmentsz;
+                    f->fragments[i * REDUNDANCY + j].node_id = nid;
+
+                    j++;
                 }
+
+                printf("- DONE\n");
 
             }
 
@@ -877,6 +889,29 @@ weird:
             if (sv.death_count > 0)
             {
                 printf("OH... WE'VE HAD CASUALTIES...\n");
+
+                // if inserted after death
+                if ( frag_count == sv.net_size * REDUNDANCY ) {
+                    for (int i = 0; i < frag_count; i++ ) frags[i] =  ptr + ( i * REDUNDANCY );
+                }
+                else {
+                    for (int i = 0; i < frag_count; i++)
+                    {
+                        xFragmentNetworkPointer *n = ptr + (i * REDUNDANCY);
+
+                        if ( server_is_valid_node(&sv, n->node_id) )
+                        {
+                            frags[i] = n;
+                            continue;
+                        }
+
+                        // int dx = ((i * REDUNDANCY) - (REDUNDANCY - 1) + frag_count) % frag_count;
+                        int dx = (i * REDUNDANCY)+1;
+                        frags[i] = ptr + dx;
+
+                        printf("USING IDX = %d | FRAG %d, NODE %ld \n", dx, frags[i]->fragment, frags[i]->node_id);
+                    }
+                }
             }
             else // This is the perfect state...
             {
@@ -886,18 +921,21 @@ weird:
             for (int i = 0; i < frag_count; i++ )
             {
                 xFragmentNetworkPointer *frag = frags[i];
-
-                if ( frag->node_id == deliver_to ) continue;
-
                 Address *deliver_to_addr = sv.index_data->peer_ips + deliver_to - 1;
+
+                if ( frag->node_id == deliver_to ) 
+                {
+                    printf("SENDING USE LOCAL.\n");
+                    int r = xprocedure_send_use_local( &sv, frag->fragment, deliver_to_addr);
+                    continue;
+                }
+
                 if (frag->node_id == sv.me.node_id) 
                 {
                     int r = xprocedure_send_fragment( &sv, &fs, file_id, frag->fragment, deliver_to_addr );
                     printf("SENT FRAGMENT #%d TO %ld : %d\n", frag->fragment, deliver_to, r);
                 }
                 else {
-
-
                     int offset = frag->node_id - 1;
                     Address *addr = sv.index_data->peer_ips + offset;
 
@@ -970,26 +1008,6 @@ weird:
             int file_id = sv.machine_state.StateRequestedFile.file_id;
             int file_sz = sv.machine_state.StateRequestedFile.file_size;
 
-            if ( w - d == 1) {
-                printf("TRYING IN MYSELF.\n");
-
-                // if this piece of shit is in my memory
-                xFileContainer *fc = xfileserver_find_file( &fs, file_id );
-                if (fc != NULL)
-                {
-                    // if I exist, the [0] is what I need. Position 1 is just for backup.
-                    xFileFragment *fp = fc->fragments;
-                    
-                    int size_per_frag = fc->size / w;                    
-                    int offset = size_per_frag * (fp->fragment_id-1);
-                    printf("FRAG #%d \t SIZE:  %ld \t OFFSET %d \n", fp->fragment_id, fp->fragment_size, offset);
-
-                    memcpy(buf + offset, fp->fragment_bytes, fp->fragment_size );
-
-                    sv.machine_state.StateRequestedFile.fragment_found++;
-                }
-            }
-
             if ( w != d ) {
                 tcp_socket c = server_accept(&sv);
 
@@ -1002,12 +1020,10 @@ weird:
                     if (!N)
                     {
                         printf("FAILED PRESENTATION PROTOCOL.\n");
-
                         break;
                     }
                     else
                     {
-
                         printf("PRESENTED AS NODE #%lu.\n", N);
                         xPacket pkt_ok = xpacket_ok(&sv);
                         server_send_to_socket(&sv, &pkt_ok, c);
@@ -1026,24 +1042,51 @@ weird:
 
                         server_send_ok(&sv, c);
 
-                        // TODO: this has no error validation, fix it
-                        int frag_size = p.bytes.comm.content.declare_fragment_transport.frag_size;
-                        //int file_size = p.bytes.comm.content.declare_fragment_transport.file_size;
-                        int frag_id = p.bytes.comm.content.declare_fragment_transport.frag_id;
-                        char *buffer = (char *)malloc(frag_size * sizeof(char));
+                        if ( p.bytes.comm.type == TYPE_DECLARE_USE_LOCAL )
+                        { // MUST USE ITS LOCAL COPY
 
-                        server_wait_large_buffer_from(&sv, c, frag_size, buffer);
+                            printf("USING MY LOCAL COPY \n");
 
-                        server_send_ok(&sv, c);
-                        server_close_socket(&sv, c);
+                            // if this piece of shit is in my memory
+                            xFileContainer *fc = xfileserver_find_file(&fs, file_id);
+                            if (fc != NULL)
+                            {
+                                xFileFragment *fp = fc->fragments;
+                                if ( fp->fragment_id != p.bytes.comm.content.declare_fragment_use_local.frag_id)
+                                {
+                                    fp = fc->fragments + 1;
+                                }
 
-                        int size_per_frag = sv.machine_state.StateRequestedFile.file_size / w;
-                        int offset = size_per_frag * (frag_id - 1);
-                        printf("FRAG #%d \t SIZE:  %d \t OFFSET %d \n", frag_id, frag_size, offset);
-                        memcpy(buf + offset, buffer, frag_size);
+                                int size_per_frag = fc->size / w;
+                                int offset = size_per_frag * (fp->fragment_id - 1);
+                                printf("FRAG #%d \t SIZE:  %ld \t OFFSET %d \n", fp->fragment_id, fp->fragment_size, offset);
 
-                        sv.machine_state.StateRequestedFile.fragment_found++;
-                        free(buffer);
+                                memcpy(buf + offset, fp->fragment_bytes, fp->fragment_size);
+
+                                sv.machine_state.StateRequestedFile.fragment_found++;
+                            }
+                        }
+                        else // DELIVERING FRAGMENT
+                        {
+                            // TODO: this has no error validation, fix it
+                            int frag_size = p.bytes.comm.content.declare_fragment_transport.frag_size;
+                            // int file_size = p.bytes.comm.content.declare_fragment_transport.file_size;
+                            int frag_id = p.bytes.comm.content.declare_fragment_transport.frag_id;
+                            char *buffer = (char *)malloc(frag_size * sizeof(char));
+
+                            server_wait_large_buffer_from(&sv, c, frag_size, buffer);
+
+                            server_send_ok(&sv, c);
+                            server_close_socket(&sv, c);
+
+                            int size_per_frag = sv.machine_state.StateRequestedFile.file_size / w;
+                            int offset = size_per_frag * (frag_id - 1);
+                            printf("FRAG #%d \t SIZE:  %d \t OFFSET %d \n", frag_id, frag_size, offset);
+                            memcpy(buf + offset, buffer, frag_size);
+
+                            sv.machine_state.StateRequestedFile.fragment_found++;
+                            free(buffer);
+                        }
                     }
                 }
 

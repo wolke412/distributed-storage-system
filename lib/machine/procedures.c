@@ -20,12 +20,14 @@ void xprocedure_check_peer_b(Server *sv, xFileInNetwork *fni)
   switch( p.bytes.comm.type )
     {
     case TYPE_PEER_DIED: {
-      printf("OH, THERE's A DEAD PEER. RIP.\n");
 
       node_id_t dead_id   = p.bytes.comm.content.peer_died.peer_id;
       Address widow       = p.bytes.comm.content.peer_died.sender_address;
 
+      printf("OH, THERE's A DEAD PEER. RIP. NODE-ID=%d\n", dead_id );
+
       sv->net_size--;
+      sv->death_count++;
 
       /**
        * 
@@ -35,7 +37,7 @@ void xprocedure_check_peer_b(Server *sv, xFileInNetwork *fni)
 
         sv->peer_f.status.open = false;
         sv->peer_f.ip = widow;
-        sv->peer_f.node_id = p.bytes.comm.sender_id;
+        sv->peer_f.node_id = (sv->me.node_id + 1) % sv->net_size; 
 
         if ( server_dial_peer(sv) )
         {
@@ -59,8 +61,15 @@ void xprocedure_check_peer_b(Server *sv, xFileInNetwork *fni)
 
         // keeps known peers to be able to navigtate what once was
         // the full list with nulls in it.
-        Address *a = sv->index_data->peer_ips + p.bytes.comm.sender_id;
-        a = NULL; 
+        int i = p.bytes.comm.content.peer_died.peer_id - 1;
+        memset(&sv->index_data->peer_ips[i], 0, sizeof(Address));
+      }
+      else {
+        if (dead_id == sv->index.node_id)
+        {
+          printf("OMG! THE INDEX DIED...\n");
+          server_set_state(sv, SERVER_BEGIN_OPERATION);
+        }
       }
     }
   }
@@ -128,6 +137,42 @@ int xprocedure_send_request_fragment( Server *sv, Address *to , int file_id, int
   server_close_socket( sv, fd );
   return 1;
 }
+
+
+int xprocedure_send_use_local( Server *sv, int fragment_id, Address *deliver_to ) 
+{
+  xPacket p = xpacket_new(sv, TYPE_DECLARE_USE_LOCAL);
+
+  p.bytes.comm.content.declare_fragment_use_local.frag_id = fragment_id;
+  p.size = sizeof(p.bytes.comm);
+
+  int c = server_dial(sv, deliver_to);
+  if (c <= 0)
+    return -1 ;
+
+  xPacket presentation = xpacket_presentation(sv);
+
+  server_send_to_socket(sv, &presentation, c);
+
+  if (!server_wait_ok(sv, c))
+  {
+    printf("PRESENTATION REFUSED.\n");
+    return -2;
+  }
+
+  server_send_to_socket(sv, &p, c);
+
+  if (!server_wait_ok(sv, c))
+  {
+    printf("FRAGMENT REFUSED.\n");
+    return -3;
+  }
+
+  server_close_socket( sv, c );
+
+  return 1;
+}
+
 
 
 /**

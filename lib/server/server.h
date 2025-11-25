@@ -131,6 +131,23 @@ typedef struct xDeclareFragmentTransport{
   uint64_t file_size;
 } xDeclareFragmentTransport;
 
+typedef struct xDeclareFragmentUseLocal{
+  uint64_t frag_id;
+} xDeclareFragmentUseLocal;
+
+
+
+typedef struct xReportFileKnowledge{
+
+  char file_name[200];
+  uint64_t file_id;
+  uint64_t file_size;
+
+  xFragmentNetworkPointer fragments[2];
+
+} xReportFileKnowledge;
+
+
 // -
 
 
@@ -157,6 +174,7 @@ typedef enum { // force to uint8_t
 
   TYPE_REQUEST_FRAG       = 20,
   TYPE_DECLARE_FRAG       = 21,
+  TYPE_DECLARE_USE_LOCAL  = 22, // force to use local version of the fragment
 
 
   TYPE_PEER_DIED          = 21,
@@ -187,6 +205,7 @@ typedef struct __attribute((packed)) {
     xResponseRequestFile      request_file_response;
     xDeliverFragmentTo        deliver_fragment_to;
     xDeclareFragmentTransport declare_fragment_transport;
+    xDeclareFragmentUseLocal  declare_fragment_use_local;
     // xPeerReportMessage report_peer;
     // ----------------------------------------
     xRequestFragmentCreation  create_frag;
@@ -363,6 +382,7 @@ int server_dial_peer(Server *sv);
 int server_is_index(Server *sv);
 
 
+int server_is_valid_node(Server *sv, node_id_t n);
 void server_index_save_reported_peer(Server *sv, xPacket *packet);
 
 
