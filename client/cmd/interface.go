@@ -28,7 +28,7 @@ func getTermWidth() int {
 }
 
 func (c *Console) AddLog(line string) {
-	
+
 	c.logs = append(c.logs, line)
 
 	logSize := 15
@@ -36,6 +36,15 @@ func (c *Console) AddLog(line string) {
 	if len(c.logs) > logSize {
 		c.logs = c.logs[1:] // keep last 10
 	}
+}
+
+func (c *Console) ModifyLog(index int, line string) {
+	if index < 0 {
+		c.logs[len((c.logs))+index] = line
+	} else {
+		c.logs[index] = line
+	}
+
 }
 
 func (c *Console) Draw() {
@@ -71,4 +80,3 @@ func (c *Console) Prompt() string {
 	line, _ := reader.ReadString('\n')
 	return strings.TrimSpace(line)
 }
-

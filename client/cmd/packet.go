@@ -18,17 +18,22 @@ const (
 	PresentItself    MessageType = 1
 	CreateFilePacket MessageType = 10
 
-	RequestFilePacket MessageType = 15
+	RequestFilePacket    MessageType = 15
+	RequestFilePacketRes MessageType = 16
+
+	StatusOK    MessageType = 200
+	StatusNotOK MessageType = 220
 )
 
 type CommunicationPacket[T Serializable] struct {
+	Size     uint16
 	SenderID uint64
 	Type     MessageType
 
-	Content *T
+	Content T
 }
 
-func Packet[T Serializable](typ MessageType, content *T) *CommunicationPacket[T] {
+func Packet[T Serializable](typ MessageType, content T) *CommunicationPacket[T] {
 	// identifies client
 	var sid uint64 = math.MaxUint64
 	// var sid  uint64 = 14
@@ -44,14 +49,14 @@ func (c *CommunicationPacket[T]) Serialize() []byte {
 
 	b := make([]byte, 0, 4096)
 
+	b = binary.LittleEndian.AppendUint16(b, 0)
 	b = binary.LittleEndian.AppendUint64(b, c.SenderID)
 
 	b = append(b, c.Type)
 
-	if c.Content != nil {
-		a := *c.Content
-		b = append(b, a.Serialize()...)
-	}
+	b = append(b, c.Content.Serialize()...)
+
+	binary.LittleEndian.PutUint16(b, uint16(len(b)))
 
 	return b
 }
@@ -61,24 +66,25 @@ func (c *CommunicationPacket[T]) Unserialize(b []byte) error {
 		return errors.New("too short")
 	}
 
-	c.SenderID = binary.BigEndian.Uint64(b[:8])
-	c.Type = uint8(b[8])
+	c.Size = binary.LittleEndian.Uint16(b[:2])
+	c.SenderID = binary.LittleEndian.Uint64(b[2:10])
+	c.Type = uint8(b[10])
 
-	if c.Content != nil {
-		a := *c.Content
-		return a.Unserialize(b[9:])
-	}
+	return c.Content.Unserialize(b[11:])
 
-	return nil
+}
+
+func PacketOk() *CommunicationPacket[*Empty] {
+	return Packet(StatusOK, &Empty{})
 }
 
 // ------------------------------------------------------------
 type FileDeclarationPacket struct {
-	FileName [256]byte
+	FileName [200]byte
 	FileSize uint64
 }
 
-func (c FileDeclarationPacket) Serialize() []byte {
+func (c *FileDeclarationPacket) Serialize() []byte {
 
 	b := make([]byte, 0, 256+8)
 
@@ -89,25 +95,25 @@ func (c FileDeclarationPacket) Serialize() []byte {
 	return b
 }
 
-func (c FileDeclarationPacket) Unserialize(b []byte) error {
+func (c *FileDeclarationPacket) Unserialize(b []byte) error {
 	return nil
 }
 
 // ------------------------------------------------------------
 
 type FileRequestPacket struct {
-	FileName [256]byte
+	FileName [200]byte
 }
 
-func (c FileRequestPacket) Serialize() []byte {
+func (c *FileRequestPacket) Serialize() []byte {
 
-	b := make([]byte, 0, 256+8)
+	b := make([]byte, 0, 256)
 	b = append(b, c.FileName[:]...)
 
 	return b
 }
 
-func (c FileRequestPacket) Unserialize(b []byte) error {
+func (c *FileRequestPacket) Unserialize(b []byte) error {
 	return nil
 }
 
@@ -119,53 +125,83 @@ type FileResponsePacket struct {
 	FragmentCountTotal uint8
 }
 
-func (c FileResponsePacket) Serialize() []byte {
+func (c *FileResponsePacket) Serialize() []byte {
 
-	b := make([]byte, 0, 256+8)
+	b := make([]byte, 0, 256)
 
 	return b
 }
 
-func (c FileResponsePacket) Unserialize(b []byte) error {
+func (c *FileResponsePacket) Unserialize(b []byte) error {
 
 	if len(b) < 16 {
-		return errors.New("Invalid len")
+		return errors.New("invalid len")
 	}
-	c.FileSize = binary.BigEndian.Uint64(b[:8])
-	c.FileId = binary.BigEndian.Uint64(b[8:16])
+
+	c.FileSize = binary.LittleEndian.Uint64(b[:8])
+	c.FileId = binary.LittleEndian.Uint64(b[8:16])
 	c.FragmentCountTotal = b[16]
+
+	fmt.Printf("UNSERIALIZING FRP\n")
+
 	return nil
 }
 
 type Empty struct {
 }
 
-func (c Empty) Serialize() []byte {
-	b := make([]byte, 0, 256+8)
+func (c *Empty) Serialize() []byte {
+	b := make([]byte, 0, 256)
 	return b
 }
 
-func (c Empty) Unserialize(b []byte) error {
+func (c *Empty) Unserialize(b []byte) error {
 	return nil
 }
 
 // ------------------------------------------------------------
 
-func ReadPacket[T Serializable](state *ClientState) (*CommunicationPacket[T], error) {
+func ReadPacket[T Serializable](state *ClientState, content T) (*CommunicationPacket[T], error) {
 
-	var bytes [256]byte
-
-	r, err := state.Conn.Read(bytes[:])
-
-	fmt.Printf("READ %d bytes \n", r)
-
-	if err != nil {
-		return nil, err
+	var sizeBuf [2]byte
+	if _, err := state.Conn.Read(sizeBuf[:]); err != nil {
+		return nil, fmt.Errorf("failed to read packet size: %w", err)
 	}
 
-	c := CommunicationPacket[T]{}
+	packetSize := uint16(sizeBuf[1])<<8 | uint16(sizeBuf[0])
+	if packetSize < 2 {
+		return nil, fmt.Errorf("invalid packet size: %d", packetSize)
+	}
 
-	c.Unserialize(bytes[:r])
+	state.Console.AddLog(fmt.Sprintf("<< WAITING FOR %d bytes (total packet)", packetSize))
+	state.Console.Draw()
 
-	return &c, nil
+	fullBuf := make([]byte, packetSize)
+	copy(fullBuf[:2], sizeBuf[:])
+
+	// Read the remaining (packetSize - 2) bytes
+	n := 0
+	for n < int(packetSize-2) {
+		readBytes, err := state.Conn.Read(fullBuf[2+n:])
+		if err != nil {
+			return nil, fmt.Errorf("failed to read full packet: %w", err)
+		}
+		n += readBytes
+	}
+
+	state.Console.AddLog(fmt.Sprintf("<< READ %d bytes (total packet)", packetSize))
+
+	c := &CommunicationPacket[T]{
+		Content: content,
+	}
+
+	if err := c.Unserialize(fullBuf); err != nil {
+		return nil, fmt.Errorf("failed to unserialize packet: %w", err)
+	}
+
+	state.Console.AddLog(fmt.Sprintf("<< READ STRUCT %+v", c))
+	state.Console.AddLog(fmt.Sprintf("<< CONT STRUCT %+v", c.Content))
+	state.Console.Draw()
+
+	return c, nil
 }

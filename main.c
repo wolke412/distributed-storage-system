@@ -116,6 +116,25 @@ int main(int argc, char **argv) {
             break;
         }
 
+        case SERVER_WAITING_NEW_PEER:
+        {
+            if (!server_is_peerb_connected(&sv))
+            {
+                tcp_socket client = server_accept(&sv);
+                if (client > 0)
+                {
+                    printf("NEW PEER CONNECTED.\n");
+                    sv.peer_b.status.open = true;
+                    sv.peer_b.stream_fd = client;
+
+                    server_set_state(&sv, SERVER_IDLE);
+                }
+            }
+            break;
+        }
+
+
+
         case SERVER_BEGIN_OPERATION:
         {
             // if i'm the index i must assume leadership
@@ -171,8 +190,6 @@ int main(int argc, char **argv) {
             tcp_socket c = server_accept(&sv);
             if (c < 0)
                 break;
-
-            // printf("Waiting...\n");
 
             xPacket p = server_wait_from_socket(&sv, c);
 
@@ -289,6 +306,13 @@ int main(int argc, char **argv) {
         case SERVER_IDLE:
         {
 
+            server_healthcheck(&sv);
+
+            if ( sv.peer_b.status.open )
+            {
+                xprocedure_check_peer_b( &sv, &fnetidx );
+            }
+
             if (sv.client_fd > 0)
             { // client is connected
                 bool h = FD_tcp_has_data(sv.client_fd);
@@ -311,6 +335,7 @@ int main(int argc, char **argv) {
                     break;
                 }
             }
+
 
             tcp_socket c = server_accept(&sv);
 
@@ -339,7 +364,6 @@ int main(int argc, char **argv) {
                         sv.client_fd = c;
                         break;
                     }
-                    
 
                     printf("Waiting...\n");
                     xPacket p = server_wait_from_socket(&sv, c);
@@ -362,6 +386,12 @@ int main(int argc, char **argv) {
 
             }
 
+            // auto kill for testing
+            if ( sv.me.node_id == 2)
+            {
+                exit(1);
+            }
+
             break;
         }
 
@@ -372,8 +402,11 @@ int main(int argc, char **argv) {
         case SERVER_RECEIVED_PACKET:
         {
             xPacket p = sv.machine_state.StateReceivedPacket.packet;
+    
             int fd = sv.machine_state.StateReceivedPacket.from_fd;
-            printf("RECEIVED NEW PACKET OF TYPE=%d\n", p.bytes.comm.type);
+
+            printf("RECEIVED NEW PACKET OF TYPE=%d FD=%d\n", p.bytes.comm.type, fd);
+
             switch (p.bytes.comm.type)
             {
             case TYPE_CREATE_FILE:
@@ -457,7 +490,8 @@ int main(int argc, char **argv) {
 
                     printf("THIS GUY JUST ASKED FOR A FILE WITH %ld bytes and .\n", fc->size);
 
-                    xPacket response = xpacket_request_file_response(&sv, fc);
+                    xPacket response = xpacket_request_file_response(&sv, fc->file_id, fc->size, fc->fragment_count_total);
+
                     server_send_to_socket(&sv, &response, fd);
 
                     sv.machine_state.StateRequestedFile.f               = f;
@@ -474,34 +508,29 @@ int main(int argc, char **argv) {
                 else {
                     if ( ! server_dial_index(&sv) ) {
                         printf("OH SHIT, INDEX IS NOT REACHABLE!\n");
-                        // handle error
                     }
                     else {
                         
                         xPacket presentation = xpacket_presentation(&sv);
                         server_send_to_index(&sv, &presentation);
-
-                        // impossible to refuse presentation... :P
                         server_wait_ok(&sv, sv.index.stream_fd);
-
                         p.bytes.comm.sender_id = sv.me.node_id;
                         server_send_to_index(&sv, &p); // just forwards it
                         
                         xPacket res = server_wait_from_socket(&sv, sv.index.stream_fd);
 
+                        usleep( 10 * 10000 );
+
                         if ( res.bytes.comm.type == TYPE_NOT_OK )
                         {
                             printf("REJECTED BY INDEX\n");
-
-                            // warns client
-                            server_send_to_socket( &sv, &res, fd );
-
+                            // server_send_to_socket( &sv, &res, fd );
+                            server_send_not_ok(&sv, fd);
                             server_close_socket(&sv, sv.index.stream_fd);
-
                             server_set_state(&sv, SERVER_IDLE);
                             break;
                         }
-                        
+
                         sv.machine_state.StateRequestedFile.f               = f;
                         sv.machine_state.StateRequestedFile.from_fd         = fd;
                         sv.machine_state.StateRequestedFile.file_id         = res.bytes.comm.content.request_file_response.file_id;
@@ -512,6 +541,16 @@ int main(int argc, char **argv) {
 
                         memset( sv.machine_state.StateRequestedFile.buffer , '.', sv.machine_state.StateRequestedFile.file_size) ;
 
+                        xPacket confirm = xpacket_request_file_response( &sv, 
+                            sv.machine_state.StateRequestedFile.file_id,
+                            sv.machine_state.StateRequestedFile.file_size,
+                            sv.machine_state.StateRequestedFile.fragment_count  
+                        );
+
+                        int w = server_send_to_socket( &sv, &confirm, fd );
+
+                        printf("SENT FILE CONFIRMATION w/ %d bytes to fd=%d\n", w, fd);
+                        xpacket_debug(&confirm);
                         server_set_state(&sv, SERVER_WAIT_REQUEST_FRAGMENTS);
                         break;
                     }
@@ -540,8 +579,12 @@ int main(int argc, char **argv) {
 
             default:
             { // we ball
-                puts((char *)&p.bytes.raw);
-                printf("\n");
+
+                printf ("UNKNOWN PACKET: \n");
+                xpacket_debug( &p );
+                printf("----------------------------------------\n");
+
+                server_set_state(&sv, SERVER_IDLE);
 
                 break;
             }
@@ -738,7 +781,7 @@ weird:
                 xFragmentNetworkPointer frag = f->fragments[i];
                 int offset =  baseoffset * (frag.fragment - 1);
 
-                printf("FRAG #%d SIZE=%d OFFSET=%d\n", frag.fragment, frag.size, offset);
+                printf("FRAG #%d SIZE=%ld OFFSET=%d\n", frag.fragment, frag.size, offset);
 
                 // IF IS MY FRAGMENT
                 if ( frag.node_id == sv.me.node_id ) 
@@ -819,8 +862,6 @@ weird:
 
             int deliver_to  = sv.machine_state.StateRequestedFile.deliver_to;
 
-            Address *deliver_addr = sv.index_data->peer_ips + ( deliver_to - 1 );
-
             printf("I MUST REQUEST FRAGMENTS of FILE #%d.\n", file_id);
 
             xFileInNetwork* file_idx_ptr = xfilenetindex_find_file(&fnetidx, file_id);
@@ -866,7 +907,7 @@ weird:
                     }
 
                     printf("ASKING FRAGMENT #%d TO NODE %ld DELIVER TO %ld\n", frag->fragment, frag->node_id, deliver_to);
-                    int r = xprocedure_send_request_fragment( &sv, addr, file_id, frag->fragment, deliver_to_addr);
+                    xprocedure_send_request_fragment( &sv, addr, file_id, frag->fragment, deliver_to_addr);
                 }
             }
 
@@ -919,7 +960,6 @@ weird:
             break;
         }
 
-
         case SERVER_WAIT_REQUEST_FRAGMENTS: {
 
             int w = sv.machine_state.StateRequestedFile.fragment_count;
@@ -931,7 +971,7 @@ weird:
             int file_sz = sv.machine_state.StateRequestedFile.file_size;
 
             if ( w - d == 1) {
-                printf("TRYING IN MYSELF.\n", d, w);
+                printf("TRYING IN MYSELF.\n");
 
                 // if this piece of shit is in my memory
                 xFileContainer *fc = xfileserver_find_file( &fs, file_id );
@@ -942,7 +982,7 @@ weird:
                     
                     int size_per_frag = fc->size / w;                    
                     int offset = size_per_frag * (fp->fragment_id-1);
-                    printf("FRAG #%d \t SIZE:  %d \t OFFSET %d \n", fp->fragment_id, fp->fragment_size, offset);
+                    printf("FRAG #%d \t SIZE:  %ld \t OFFSET %d \n", fp->fragment_id, fp->fragment_size, offset);
 
                     memcpy(buf + offset, fp->fragment_bytes, fp->fragment_size );
 
@@ -950,7 +990,7 @@ weird:
                 }
             }
 
-            if ( w != d) {
+            if ( w != d ) {
                 tcp_socket c = server_accept(&sv);
 
                 if (c > 0)
@@ -988,10 +1028,11 @@ weird:
 
                         // TODO: this has no error validation, fix it
                         int frag_size = p.bytes.comm.content.declare_fragment_transport.frag_size;
-                        int file_size = p.bytes.comm.content.declare_fragment_transport.file_size;
+                        //int file_size = p.bytes.comm.content.declare_fragment_transport.file_size;
                         int frag_id = p.bytes.comm.content.declare_fragment_transport.frag_id;
                         char *buffer = (char *)malloc(frag_size * sizeof(char));
-                        int e = server_wait_large_buffer_from(&sv, c, frag_size, buffer);
+
+                        server_wait_large_buffer_from(&sv, c, frag_size, buffer);
 
                         server_send_ok(&sv, c);
                         server_close_socket(&sv, c);
@@ -1005,16 +1046,20 @@ weird:
                         free(buffer);
                     }
                 }
-                    break;
+
+                break;
             } 
+
+            int client = sv.machine_state.StateRequestedFile.from_fd;
 
             printf("------------------------------------------------------------\n");
             printf(" BUFFER:\n %s \n", buf);
             printf("------------------------------------------------------------\n");
 
-            int client = sv.machine_state.StateRequestedFile.from_fd;
+            printf("WAITING OK TO START \n");
+            server_wait_ok(&sv, client);
 
-            server_send_large_buffer_to(&sv, client, file_sz, buf );
+            server_send_large_buffer_to( &sv, client, file_sz, buf );
 
             server_set_state(&sv, SERVER_IDLE);
 

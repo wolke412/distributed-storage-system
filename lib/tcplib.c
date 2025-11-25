@@ -5,6 +5,7 @@
 #include <netinet/in.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <poll.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
@@ -63,6 +64,35 @@ tcp_socket tcp_listen(int port) {
     return sockfd;
 }
 
+
+int tcp_try_accept(int server_fd)
+{
+    struct pollfd pfd;
+    pfd.fd = server_fd;
+    pfd.events = POLLIN;
+
+    int r = poll(&pfd, 1, 0);  // timeout = 0 ms -> non-blocking check
+    if (r < 0) {
+        perror("poll");
+        return -1;
+    }
+
+    if (r == 0) {
+        // No client waiting
+        return 0;
+    }
+
+    int client = accept(server_fd, NULL, NULL);
+    if (client < 0) {
+        perror("accept");
+        return -1;
+    }
+
+    return client;
+}
+
+
+
 tcp_socket tcp_accept(tcp_socket server_sock) {
 
     struct sockaddr_in client_addr;
@@ -77,6 +107,7 @@ tcp_socket tcp_accept(tcp_socket server_sock) {
         } else {
             perror("accept");
         }
+
         return -1;
     }
 
@@ -85,9 +116,14 @@ tcp_socket tcp_accept(tcp_socket server_sock) {
     return client_sock;
 }
 
-size_t tcp_peek(tcp_socket client_sock, void *buffer, size_t len) {
+int tcp_peek(tcp_socket client_sock, void *buffer, size_t len) {
     return recv(client_sock, buffer, len, MSG_PEEK);
 }
+
+int tcp_peek_u(tcp_socket client_sock, void *buffer, size_t len ) {
+    return recv(client_sock, buffer, len, MSG_DONTWAIT | MSG_PEEK);
+}
+
 
 size_t tcp_has_data(tcp_socket client_sock) {
     int i = 0;
@@ -109,23 +145,52 @@ int FD_tcp_has_data(tcp_socket sock) {
 }
 
 
-size_t tcp_recv(tcp_socket client_sock, void *buffer, size_t len ) {
+int tcp_recv(tcp_socket client_sock, void *buffer, size_t len ) {
     return recv(client_sock, buffer, len, 0);
 }
 
-size_t tcp_recv_u(tcp_socket client_sock, void *buffer, size_t len ) {
+int tcp_recv_u(tcp_socket client_sock, void *buffer, size_t len ) {
     return recv(client_sock, buffer, len, MSG_DONTWAIT);
 }
 
-size_t tcp_recv_flags(tcp_socket client_sock, void *buffer, size_t len, int flags) {
+int tcp_recv_flags(tcp_socket client_sock, void *buffer, size_t len, int flags) {
     return recv(client_sock, buffer, len, flags);
 }
 
-size_t tcp_send(tcp_socket client_sock, const void *buffer, size_t len) {
-    return send(client_sock, buffer, len, 0);
+int tcp_send(tcp_socket client_sock, const void *buffer, size_t len) {
+    // printf("SENDING BUF *%p SIZE=%d \n", buffer, len);
+
+    const char *buf = (const char *)buffer;
+    size_t total_sent = 0;
+
+    while (total_sent < len) {
+        ssize_t n = send(client_sock, buf + total_sent, len - total_sent, 0);
+
+        // printf("__ sent %d bytes\n", total_sent+n);
+        if (n > 0) {
+            total_sent += n;
+            continue;
+        }
+
+        if (n <= 0) {
+            // Socket would block → wait a bit and retry
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // sleep a tiny bit to avoid spinning the CPU
+                usleep(1000); 
+                continue;
+            }
+
+            // Actual error
+            perror("send");
+            return total_sent;  // bytes sent before failure
+        }
+    }
+
+    return total_sent;
 }
 
-size_t tcp_send_u(tcp_socket client_sock, const void *buffer, size_t len) {
+
+int tcp_send_u(tcp_socket client_sock, const void *buffer, size_t len) {
     return send(client_sock, buffer, len, MSG_NOSIGNAL | MSG_DONTWAIT);
 }
 

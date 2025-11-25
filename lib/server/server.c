@@ -1,7 +1,5 @@
 #include "server.h"
     
-#include "../tcplib.h"    // your TCP helpers
-#include "../defines.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -123,11 +121,13 @@ uint64_t server_millis_in_state(Server *sv)
 // ------------------------------------------------------------
 // Check peer connection states
 // ------------------------------------------------------------
-bool server_is_peerf_connected(const Server *sv) {
+bool server_is_peerf_connected(const Server *sv) 
+{
     return sv && sv->peer_f.status.open;
 }
 
-bool server_is_peerb_connected(const Server *sv) {
+bool server_is_peerb_connected(const Server *sv) 
+{
     return sv && sv->peer_b.status.open;
 }
 
@@ -164,12 +164,11 @@ int server_dial_peer(Server *sv) {
 }
 
 // ------------------------------------------------------------
-// Accept backward peer 
 // ------------------------------------------------------------
 int server_accept(Server *sv) {
     if (!sv || sv->listener_fd < 0) return -1;
 
-    tcp_socket client_fd = tcp_accept(sv->listener_fd);
+    tcp_socket client_fd = tcp_try_accept(sv->listener_fd);
 
     if (client_fd == NO_CONNECTION_WAITING) {
         return NO_CONNECTION_WAITING;
@@ -366,6 +365,16 @@ void server_index_save_reported_peer(Server *sv, xPacket *p) {
     *(sv->index_data->peer_ips + sender - 1) = peer_addr;
 }
 
+
+
+/**
+ * 
+ * 
+ * 
+ * 
+ * 
+ */
+
 // ------------------------------------------------------------
 xPacket xpacket_report_self( Server *sv ) 
 {
@@ -391,6 +400,7 @@ xPacket xpacket_ok( Server *sv )
     p.bytes.comm.type       = TYPE_OK;
 
     p.size = sizeof( p.bytes.comm ) + sizeof(p.size);
+    p.bytes.comm.packet_size = p.size;
 
     return p;
 }
@@ -403,6 +413,7 @@ xPacket xpacket_not_ok( Server *sv )
     p.bytes.comm.type       = TYPE_NOT_OK;
 
     p.size = sizeof( p.bytes.comm ) + sizeof(p.size);
+    p.bytes.comm.packet_size = p.size;
 
     return p;
 }
@@ -415,6 +426,7 @@ xPacket xpacket_presentation( Server *sv )
     p.bytes.comm.type       = TYPE_PRESENT_ITSELF;
 
     p.size = sizeof( p.bytes.comm ) + sizeof(p.size);
+    p.bytes.comm.packet_size = p.size;
 
     return p;
 }
@@ -429,26 +441,45 @@ xPacket xpacket_send_fragment( Server *sv, xRequestFragmentCreation *frag)
     p.bytes.comm.content.create_frag = *frag;
 
     p.size = sizeof( p.bytes.comm ) + sizeof(p.size);
+    p.bytes.comm.packet_size = p.size;
 
     return p;
 }
 // ------------------------------------------------------------
-xPacket xpacket_request_file_response( Server *sv, xFileContainer *fc)
+xPacket xpacket_request_file_response( Server *sv, int file_id, uint64_t filesize, int frag_count )
 {
-
     xPacket p = {0};
     p.bytes.comm.sender_id  = sv->me.node_id;
-
     p.bytes.comm.type       = TYPE_RESPONSE_FILE;
 
-    p.bytes.comm.content.request_file_response.file_id = fc->file_id;
-    p.bytes.comm.content.request_file_response.file_size = fc->size;
-    p.bytes.comm.content.request_file_response.fragment_count_total = fc->fragment_count_total;
+    p.bytes.comm.content.request_file_response.file_id = file_id;
+    p.bytes.comm.content.request_file_response.file_size = filesize;
+    p.bytes.comm.content.request_file_response.fragment_count_total = frag_count;
 
     p.size = sizeof( p.bytes.comm ) + sizeof(p.size);
+    p.bytes.comm.packet_size = p.size;
 
     return p;
+}
 
+// ------------------------------------------------------------
+xPacket xpacket_peer_dead( Server *sv, node_id_t peer )
+{
+    xPacket p = xpacket_new(sv, TYPE_PEER_DIED);
+    p.bytes.comm.content.peer_died.peer_id = peer;
+    p.bytes.comm.content.peer_died.sender_address = sv->me.ip;
+
+    p.size = sizeof( p.bytes.comm ) ;
+    p.bytes.comm.packet_size = p.size;
+
+    return p;
+}
+// ------------------------------------------------------------
+xPacket xpacket_new( Server *sv, uint8_t type ) {
+    xPacket p = {0};
+    p.bytes.comm.sender_id  = sv->me.node_id;
+    p.bytes.comm.type       = type;
+    return p;
 }
 // ------------------------------------------------------------
 void xpacket_debug(const xPacket *p) {
@@ -579,6 +610,9 @@ void print_state(eServerState st) {
             printf("SERVER_WAIT_REQUEST_FRAGMENTS");
             break;
 
+        case SERVER_WAITING_NEW_PEER: 
+            printf("SERVER_WAITING_NEW_PEER");
+            break;
 
         case SERVER_OTHER:
             printf("SERVER_OTHER");

@@ -1,11 +1,19 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"net"
+	"os"
+	"path/filepath"
+	"time"
 )
 
-func readLargeBuffer(conn net.Conn, bufferSize int) ([]byte, error) {
+func readLargeBuffer(state *ClientState, bufferSize int) ([]byte, error) {
+
+	conn := state.Conn
+
 	buf := make([]byte, bufferSize)
 	populated := 0
 
@@ -14,10 +22,25 @@ func readLargeBuffer(conn net.Conn, bufferSize int) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		populated += n
+
+		state.Console.ModifyLog(-1, fmt.Sprintf("%.2f %%", float64(populated)/float64(bufferSize)))
+		state.Console.Draw()
 	}
 
 	return buf, nil
+}
+
+func readPacket(conn net.Conn) ([]byte, error) {
+	header := make([]byte, 2)
+	io.ReadFull(conn, header)
+
+	size := int(header[0])<<8 | int(header[1])
+	payload := make([]byte, size-2)
+
+	io.ReadFull(conn, payload)
+	return append(header, payload...), nil
 }
 
 func HandleRequest(state *ClientState, args []string) *CommandResult {
@@ -44,43 +67,87 @@ func HandleRequest(state *ClientState, args []string) *CommandResult {
 func HandleFileRequest(state *ClientState, args []string) *CommandResult {
 
 	if len(args) < 1 {
-		// if len(args) < 2 {
-		return Warning("Usage: req file <name> <path>")
+		return Warning("Usage: req file <name> <?path>")
 	}
 
 	fileName := args[0]
-	// storeAt := args[1]
 
-	pkt := FileRequestPacket{
-		FileName: ToFixed256([]byte(fileName)),
+	var storeAt string
+
+	if len(args) == 1 {
+		storeAt = "./files"
+	} else {
+		storeAt = args[1]
 	}
 
-	// buffer := make([]byte, pkt.FileSize)
-	// _, err = io.ReadFull(file, buffer)
-
-	// if err != nil {
-	// return Failure("Failed to read file", err)
-	// }
+	pkt := FileRequestPacket{
+		FileName: ToFixed200([]byte(fileName)),
+	}
 
 	p := Packet(RequestFilePacket, &pkt)
 
-	ok := sendBytes(state, p.Serialize(), "file")
+	fmt.Printf("SERIAL: \n %+v \n", p.Serialize())
 
-	c, err := ReadPacket[FileResponsePacket](state)
+	ok := sendBytes(state, p.Serialize(), "request")
 
-	if err != nil {
-		return Failure("Error reading package.", err)
+	if ok.Status == StatusError {
+		return ok
 	}
 
-	state.Console.AddLog(fmt.Sprintf("TYPE = %d \n", c.Type))
+	time.Sleep(time.Millisecond * 50)
+
+	fmt.Printf("WAITING FILE DESCRIPTOR PACKET .\n")
+
+	frp, err := ReadPacket(state, &FileResponsePacket{})
+	if err != nil {
+		return Failure("Error reading FILE DESCRIPTOR", err)
+	}
+
+	state.Console.AddLog(fmt.Sprintf("<< SIZE %d SENDER %d TYPE %d", frp.Size, frp.SenderID, frp.Type))
+	state.Console.AddLog(fmt.Sprintf("<< FILE  %d SIZE = %d FRAGS = %d", frp.Content.FileId, frp.Content.FileSize, frp.Content.FragmentCountTotal))
 	state.Console.Draw()
 
-	return ok
+	if frp.Type != RequestFilePacketRes {
+		return Failure("Server responded with NOT OK", errors.New("err code=2"))
+	}
 
-	// if ok.Status == StatusError {
-	// 	return ok
-	// }
+	fmt.Printf("Sending ok...\n")
 
-	//state.Console.AddLog(ok.PrettyString())
+	ok = sendBytes(state, PacketOk().Serialize(), "request")
+	if ok.Status == StatusError {
+		return ok
+	}
 
+	time.Sleep(time.Millisecond * 50)
+
+	fmt.Printf("WAITING RAW...\n")
+
+	state.Console.AddLog("RAW: 0%")
+	state.Console.Draw()
+	buf, err := readLargeBuffer(state, int(frp.Content.FileSize))
+	if err != nil {
+		return Failure("Error reading file.", errors.New("err code=3"))
+	}
+
+	err = SaveBufferToFile(buf, storeAt, fileName)
+	if err != nil {
+		return Failure("Error saving buffer.", err)
+	}
+
+	return Success("File successfully saved to " + storeAt + " as " + fileName)
+}
+
+func SaveBufferToFile(buf []byte, storeTo, fileName string) error {
+
+	if err := os.MkdirAll(storeTo, os.ModePerm); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	fullPath := filepath.Join(storeTo, fileName)
+
+	if err := os.WriteFile(fullPath, buf, 0644); err != nil {
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+
+	return nil
 }

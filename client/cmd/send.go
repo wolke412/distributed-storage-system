@@ -59,14 +59,27 @@ func HandleSend(state *ClientState, args []string) *CommandResult {
 
 func HandleAuth(state *ClientState) *CommandResult {
 
-	p := Packet[Empty](PresentItself, nil)
-
+	p := Packet[*Empty](PresentItself, &Empty{})
 	dbg := fmt.Sprintf(" { sender_id: %u, type: %d } ", p.SenderID, p.Type)
 
 	state.Console.AddLog(dbg)
 
 	// return Success("Authorized! " + dbg)
-	return sendBytes(state, p.Serialize(), "auth")
+	sendBytes(state, p.Serialize(), "auth")
+
+	/**
+	Awaits an "OK" packet
+	*/
+	c, err := ReadPacket(state, &Empty{})
+	if err != nil {
+		return Failure("Error reading server response", err)
+	}
+
+	if c.Type != StatusOK {
+		return Failure("Failed presentation.", nil)
+	}
+
+	return Success("Presentation accepcted!")
 }
 
 func HandleFileTransmission(state *ClientState, args []string) *CommandResult {
@@ -94,7 +107,7 @@ func HandleFileTransmission(state *ClientState, args []string) *CommandResult {
 	}
 
 	pkt := FileDeclarationPacket{
-		FileName: ToFixed256([]byte(info.Name())),
+		FileName: ToFixed200([]byte(info.Name())),
 		FileSize: uint64(info.Size()),
 	}
 
@@ -105,8 +118,7 @@ func HandleFileTransmission(state *ClientState, args []string) *CommandResult {
 		return Failure("Failed to read file", err)
 	}
 
-	p := Packet[FileDeclarationPacket](CreateFilePacket, &pkt)
-
+	p := Packet(CreateFilePacket, &pkt)
 	ok := sendBytes(state, p.Serialize(), "file")
 
 	if ok.Status == StatusError {
@@ -114,16 +126,6 @@ func HandleFileTransmission(state *ClientState, args []string) *CommandResult {
 	}
 
 	state.Console.AddLog(ok.PrettyString())
-	// state.Console.Draw()
-
-	// var b [4096]byte
-	// n, err := state.Conn.Read(b[:])
-
-	// if err != nil {
-	// 	return Failure("Failed to read confirmation", err)
-	// }
-
-	// state.Console.AddLog(paint.BrightCyan(fmt.Sprintf("Confirmation successfull, read %d bytes", n)))
 
 	time.Sleep(time.Millisecond * 10)
 
@@ -151,8 +153,8 @@ func HandleFileTransmission(state *ClientState, args []string) *CommandResult {
 	return Warning("Sending done.")
 }
 
-func ToFixed256(b []byte) [256]byte {
-	var arr [256]byte
+func ToFixed200(b []byte) [200]byte {
+	var arr [200]byte
 	copy(arr[:], b)
 	return arr
 }

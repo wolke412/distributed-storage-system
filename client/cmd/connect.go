@@ -28,24 +28,5 @@ func HandleConnect(state *ClientState, args []string) *CommandResult {
 	state.ConnectedTo = addr
 	state.SetState(StateConnected)
 
-	go func() {
-		buf := make([]byte, 1)
-		for {
-			_, err := conn.Read(buf)
-			if err != nil {
-				state.Console.AddLog(Failure("", nil).PrettyString())
-				state.Console.AddLog(Failure("\t\tConnection lost!", nil).PrettyString())
-				state.Console.AddLog(Failure("", nil).PrettyString())
-				state.Console.Draw()
-
-				state.Conn.Close()
-				state.Conn = nil
-				state.SetState(StateDisconnected)
-				state.ConnectedTo = ""
-				return
-			}
-		}
-	}()
-
 	return Success(fmt.Sprintf("Connected to %s", addr))
 }

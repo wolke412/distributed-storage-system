@@ -1,4 +1,5 @@
 #ifndef SERVER_H
+
 #define SERVER_H
 
 
@@ -16,6 +17,7 @@
 #include "../args.h"  
 #include "../nettypes.h"  
 #include "../defines.h"  
+#include "../tcplib.h" 
 
 #include "../fileserver/fs.h"  
 
@@ -76,17 +78,12 @@ typedef struct xIndexPresentationPacket {
   Address index_addr;
 } xIndexPresentationPacket;
 
-typedef struct xPeerIsDeadMessage{
-  node_id_t dead_peer_id;
-  Address sender_address;
-} xPeerIsDeadMessage;
-
 typedef struct xPeerReportMessage{
   Address peer_addr;
 } xPeerReportMessage;
 
 typedef struct xRequestFileCreation{
-  char name[256];
+  char name[200];
   uint64_t file_size;
 } xRequestFileCreation;
 
@@ -95,7 +92,7 @@ typedef struct xResponseFileCreation{
 } xResponseFileCreation;
 
 typedef struct xRequestFragmentCreation{
-  char file_name[256];
+  char file_name[200];
   uint64_t file_size;
   uint64_t file_id;
   uint8_t fragment_count_total;
@@ -104,10 +101,15 @@ typedef struct xRequestFragmentCreation{
   uint64_t frag_size;
 } xRequestFragmentCreation;
 
+typedef struct xPeerDied{
+  node_id_t peer_id;
+  Address   sender_address;
+} xPeerDied;
+
 // -
 
 typedef struct xRequestFile{
-  char name[256];
+  char name[200];
 } xRequestFile;
 
 typedef struct xResponseRequestFile{
@@ -141,9 +143,6 @@ typedef enum { // force to uint8_t
 
   TYPE_PRESENT_ITSELF           = 1,
 
-  TYPE_PEER_IS_DEAD              , // do you have what it takes to crush my rat? 
-                                   //
-
   TYPE_REPORT_SELF, 
 
   TYPE_REQUEST_FILE_INDEX, 
@@ -159,6 +158,10 @@ typedef enum { // force to uint8_t
   TYPE_REQUEST_FRAG       = 20,
   TYPE_DECLARE_FRAG       = 21,
 
+
+  TYPE_PEER_DIED          = 21,
+  TYPE_INDEX_DIED         = 22,
+
   TYPE_OK     = 200, 
   TYPE_NOT_OK = 220, 
 
@@ -167,18 +170,18 @@ typedef enum { // force to uint8_t
 
 typedef struct __attribute((packed)) {
 
+  uint16_t packet_size;
+
   node_id_t sender_id;
 
   uint8_t type;
 
   union {
     // ----------------------------------------
-    xPeerIsDeadMessage dead_peer;
+    xPeerReportMessage        report_self;
     // ----------------------------------------
-    xPeerReportMessage report_self;
-    // ----------------------------------------
-    xRequestFileCreation create_file;
-    xResponseFileCreation res_create_file;
+    xRequestFileCreation      create_file;
+    xResponseFileCreation     res_create_file;
     // ----------------------------------------
     xRequestFile              request_file;
     xResponseRequestFile      request_file_response;
@@ -186,8 +189,11 @@ typedef struct __attribute((packed)) {
     xDeclareFragmentTransport declare_fragment_transport;
     // xPeerReportMessage report_peer;
     // ----------------------------------------
-    xRequestFragmentCreation create_frag;
+    xRequestFragmentCreation  create_frag;
+    // ----------------------------------------
+    xPeerDied                 peer_died;
 
+    char raw[256-sizeof(node_id_t) - sizeof(uint8_t)];
   } content;
 
 } xCommunicationPacket;
@@ -249,6 +255,10 @@ typedef union {
 
     char *buffer;
   } StateRequestedFile;
+ 
+
+  struct StateDeadPeer { node_id_t dead_peer_id; } StateDeadPeer ;
+
 
 
 } uMachineState;
@@ -273,6 +283,7 @@ typedef enum  {
     // iDX SPECIFIC
     SERVER_INDEX_PRESENT_ITSELF,
     SERVER_INDEX_WAITING_PEERS,
+    SERVER_INDEX_HANDLE_DEAD_PEER,
     SERVER_INDEX_HANDLE_NEW_FILE,
     // file stuff
         SERVER_INDEX_FANOUT_FRAGMENTS,
@@ -282,7 +293,8 @@ typedef enum  {
     SERVER_WAIT_INDEX_GOSSIP,
     SERVER_REPORT_KNOWLEDGE_TO_INDEX,
 
-
+    // waiting 
+    SERVER_WAITING_NEW_PEER, 
 
 
 
@@ -381,23 +393,23 @@ int server_wait_ok(Server *sv, int to);
 // XPACKET SHIT
 // ------------------------------------------------------------
 
+xPacket xpacket_new( Server *sv, uint8_t type );
+
 xPacket xpacket_report_self( Server *sv );
 xPacket xpacket_presentation( Server *sv );
 xPacket xpacket_ok( Server *sv ); 
 xPacket xpacket_not_ok( Server *sv ); 
 xPacket xpacket_send_fragment( Server *sv, xRequestFragmentCreation *frag);
-xPacket xpacket_request_file_response( Server *sv, xFileContainer *fc);
+xPacket xpacket_request_file_response( Server *sv, int file_id, uint64_t filesize, int frag_count );
 
+xPacket xpacket_peer_dead( Server *sv, node_id_t p );
 
 
 void xpacket_debug(const xPacket *p);
 
 
 // ------------------------------------------------------------ 
-
-
 void xreqfragcreation_new( xRequestFragmentCreation *fragcreation, xFileContainer *fc, xFragmentNetworkPointer *frag );
-
 // ------------------------------------------------------------ 
 
 void print_state(eServerState st);
