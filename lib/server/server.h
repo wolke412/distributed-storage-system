@@ -140,8 +140,10 @@ typedef struct xDeclareFragmentUseLocal{
 typedef struct xReportFileKnowledge{
 
   char file_name[200];
-  uint64_t file_id;
-  uint64_t file_size;
+
+  uint64_t file_size;   
+  uint16_t file_id;     
+  uint8_t  frag_count;  
 
   xFragmentNetworkPointer fragments[2];
 
@@ -156,30 +158,28 @@ typedef struct xReportFileKnowledge{
 
 typedef enum { // force to uint8_t
 
-  TYPE_LEADER_IS_DEAD           = 0 , // disseminates panic in the network
+  // TYPE_LEADER_IS_DEAD     = 0 , // disseminates panic in the network
 
-  TYPE_PRESENT_ITSELF           = 1,
-
-  TYPE_REPORT_SELF, 
-
+  TYPE_PRESENT_ITSELF     = 1,
+  // ------------------------------------------------------------
+  TYPE_REPORT_SELF        = 5, 
+  TYPE_REPORT_FILE        = 6, 
+  // ------------------------------------------------------------
   TYPE_REQUEST_FILE_INDEX, 
-
-
-  // -
+  // ------------------------------------------------------------
   TYPE_CREATE_FILE        = 10,
   TYPE_STORE_FRAGMENT     = 11,
-
+  // ------------------------------------------------------------
   TYPE_REQUEST_FILE       = 15,
   TYPE_RESPONSE_FILE      = 16,
-
+  // ------------------------------------------------------------
   TYPE_REQUEST_FRAG       = 20,
   TYPE_DECLARE_FRAG       = 21,
   TYPE_DECLARE_USE_LOCAL  = 22, // force to use local version of the fragment
-
-
+  // ------------------------------------------------------------
   TYPE_PEER_DIED          = 21,
   TYPE_INDEX_DIED         = 22,
-
+  // ------------------------------------------------------------
   TYPE_OK     = 200, 
   TYPE_NOT_OK = 220, 
 
@@ -197,6 +197,7 @@ typedef struct __attribute((packed)) {
   union {
     // ----------------------------------------
     xPeerReportMessage        report_self;
+    xReportFileKnowledge      report_file;
     // ----------------------------------------
     xRequestFileCreation      create_file;
     xResponseFileCreation     res_create_file;
@@ -301,7 +302,7 @@ typedef enum  {
 
     // iDX SPECIFIC
     SERVER_INDEX_PRESENT_ITSELF,
-    SERVER_INDEX_WAITING_PEERS,
+    SERVER_INDEX_WAITING_PEERS_KNOWLEDGE,
     SERVER_INDEX_HANDLE_DEAD_PEER,
     SERVER_INDEX_HANDLE_NEW_FILE,
     // file stuff
@@ -332,7 +333,7 @@ typedef struct xIndexData {
 
 // ------------------------------------------------------------ 
 //  THIS IS STACK, so 
-typedef struct {
+typedef struct xServer {
 
     xWhoAmI me;
     xPeerConnection peer_f;     // Forward peer
@@ -348,7 +349,7 @@ typedef struct {
 
     // 
     xPeerConnection index;
-    xIndexData* index_data;
+    xIndexData *index_data;
     
 
     int listener_fd;            // TCP listener socket
@@ -383,7 +384,7 @@ int server_is_index(Server *sv);
 
 
 int server_is_valid_node(Server *sv, node_id_t n);
-void server_index_save_reported_peer(Server *sv, xPacket *packet);
+node_id_t server_index_save_reported_peer(Server *sv, xPacket *p);
 
 
 size_t server_send_to_peer_f(Server *sv, xPacket *packet);

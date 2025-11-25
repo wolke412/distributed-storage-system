@@ -8,6 +8,10 @@
 
 void server_healthcheck(Server *sv);
 
+
+
+node_id_t xprocedure_wait_identification(Server *sv, int c);
+
 /**
  * PROCEDURES
  * ------------------------------------------------------------

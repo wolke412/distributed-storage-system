@@ -102,7 +102,7 @@ void server_set_state(Server *sv, eServerState st) {
 
     // required state swaps
     switch (st)  {
-        case SERVER_INDEX_WAITING_PEERS: {
+        case SERVER_INDEX_WAITING_PEERS_KNOWLEDGE: {
             sv->machine_state.StateIndexWaitingPeers.connected = 0;
         }
 
@@ -194,7 +194,7 @@ void server_close_socket(Server *sv, int socket) {
 int server_dial_index(Server *sv) {
     if (!sv) return 0;
     
-    printf("Calling index...\n");
+    // printf("Calling index...\n");
 
     int fd = tcp_open(&sv->index.ip);
 
@@ -363,15 +363,17 @@ int server_is_valid_node(Server *sv, node_id_t n) {
     return a->port != 0;
 }
 
-void server_index_save_reported_peer(Server *sv, xPacket *p) {
+node_id_t server_index_save_reported_peer(Server *sv, xPacket *p) {
 
-    node_id_t sender = p->bytes.comm.sender_id;
-    Address peer_addr = p->bytes.comm.content.report_self.peer_addr;
+    node_id_t sender    = p->bytes.comm.sender_id;
+    Address peer_addr   = p->bytes.comm.content.report_self.peer_addr;
 
     // @TODO: validate sender_id
-    printf(" SAVING NODE #%ld \n", sender);
+    printf("SAVING NODE #%ld \n", sender);
     sv->index_data->known_peers++;
     *(sv->index_data->peer_ips + sender - 1) = peer_addr;
+
+    return sender;
 }
 
 
@@ -396,7 +398,7 @@ xPacket xpacket_report_self( Server *sv )
     p.bytes.comm.content.report_self.peer_addr  = sv->me.ip;
     // p.bytes.comm.content.report_self.peer_id    = c.node_id;
 
-    p.size = sizeof( p.bytes.comm ) + sizeof(p.size);
+    p.size = sizeof( p.bytes.comm );
 
     return p;
 }
@@ -591,7 +593,7 @@ void print_state(eServerState st) {
             printf("SERVER_INDEX_PRESENT_ITSELF");
             break;
 
-        case SERVER_INDEX_WAITING_PEERS:
+        case SERVER_INDEX_WAITING_PEERS_KNOWLEDGE:
             printf("SERVER_INDEX_WAITING_PEERS");
             break;
 

@@ -88,6 +88,8 @@ void server_healthcheck( Server *sv )
 
       xprocedure_peer_died_notify( sv ); 
 
+
+
       server_set_state(sv, SERVER_WAITING_NEW_PEER);
 
     } else if (n < 0) {
@@ -96,6 +98,33 @@ void server_healthcheck( Server *sv )
         // Data is available, connection still open
     }
   }
+}
+
+/**
+ * 
+ * ------------------------------------------------------------
+ *  Notes: 
+ *      this procedures closes the connection if failed protocol
+ */
+node_id_t xprocedure_wait_identification(Server *sv, int client) 
+{
+  node_id_t N = server_wait_client_presentation(&sv, client);
+
+  if (!N) {
+    tcp_close(client);
+    return 0;
+  }
+
+  xPacket pkt_ok = xpacket_ok(&sv);
+  size_t sent = server_send_to_socket(&sv, &pkt_ok, client);
+
+  if ( sent <= 0 ) 
+  {
+    tcp_close(client);
+    return 0;
+  }
+
+  return N;
 }
 
 
@@ -264,6 +293,7 @@ int xprocedure_peer_died_notify( Server *sv )
   xprocedure_peer_died_forward(sv, &p);
 
   sv->net_size--;
+
 }
 
 int xprocedure_peer_died_forward( Server *sv, xPacket *p )

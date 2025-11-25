@@ -36,7 +36,7 @@ xFileContainer *xfileserver_add_file(
     file->size                  = total_size;
     file->fragment_count_total  = fragment_count_total;
 
-    // guarantee they're do not get mistaken by fragment 
+    // guarantee they do not get mistaken by fragment 
     file->fragments[0].fragment_id = 0;
     file->fragments[1].fragment_id = 0;
     

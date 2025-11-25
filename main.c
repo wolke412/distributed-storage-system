@@ -116,6 +116,10 @@ int main(int argc, char **argv) {
             break;
         }
 
+        /**
+         * When the peer dies it comes to this :)
+         * ------------------------------------------------------------
+         */
         case SERVER_WAITING_NEW_PEER:
         {
             if (!server_is_peerb_connected(&sv))
@@ -127,21 +131,26 @@ int main(int argc, char **argv) {
                     sv.peer_b.status.open = true;
                     sv.peer_b.stream_fd = client;
 
+                    // if i'm node 1, my previous peer was index 
+                    if ( sv.me.node_id == 1 )
+                    {
+                      printf("OMG! THE INDEX DIED...\n");
+                      server_set_state(&sv, SERVER_BEGIN_OPERATION);
+                      break;
+                    }
+
                     server_set_state(&sv, SERVER_IDLE);
                 }
             }
             break;
         }
 
-
-
         case SERVER_BEGIN_OPERATION:
         {
             // if i'm the index i must assume leadership
             if (sv.net_size == sv.me.node_id)
             {
-
-                sv.index_data = malloc(sizeof(xIndexData));
+                sv.index_data           = malloc(sizeof(xIndexData));
                 sv.index_data->peer_ips = malloc(sv.net_size * sizeof(Address));
 
                 server_set_state(&sv, SERVER_INDEX_PRESENT_ITSELF);
@@ -179,58 +188,116 @@ int main(int argc, char **argv) {
                 return 1;
             }
 
-            server_set_state(&sv, SERVER_INDEX_WAITING_PEERS);
+            server_set_state(&sv, SERVER_INDEX_WAITING_PEERS_KNOWLEDGE);
 
             break;
         }
 
-        case SERVER_INDEX_WAITING_PEERS:
+        case SERVER_INDEX_WAITING_PEERS_KNOWLEDGE:
         {
-
-            tcp_socket c = server_accept(&sv);
-            if (c < 0)
-                break;
-
-            xPacket p = server_wait_from_socket(&sv, c);
-
-            if (p.size < 0)
-            {
-                printf("DEU MERDA RECEBENDO CONHECIMENTO EM. \n");
-                break;
-            }
-
-            if (p.bytes.comm.type != TYPE_REPORT_SELF)
-            {
-                printf("UNEXPECTED TYPE \n");
-                break;
-            }
-
             if (sv.index_data == NULL)
             {
                 printf("INDEX STRUTURES NOT BUILT! \n");
                 break;
             }
 
-            server_index_save_reported_peer(&sv, &p);
+            tcp_socket c = server_accept(&sv);
+            if (c <= 0)
+                break;
 
-            sv.machine_state.StateIndexWaitingPeers.connected++;
-
-            printf("RECEIVED %ld / %ld \n", sv.machine_state.StateIndexWaitingPeers.connected, sv.net_size - 1);
-
-            server_close_socket(&sv, c);
-
-            if (sv.machine_state.StateIndexWaitingPeers.connected == sv.net_size - 1)
+            node_id_t client_node = xprocedure_wait_identification(&sv, c);
+            if ( client_node <= 0 )
             {
-                server_set_state(&sv, SERVER_IDLE);
-                printf("FOUND:\n");
-
-                for (int i = 0; i < sv.net_size - 1; i++)
+                printf("FAILED PRESENTATON PROTOCOL.\n");
+                break;
+            }
+            /**
+             *  Receives all data and closes the connection
+             * ------------------------------------------------------------
+             *  Notes:  
+             *          This will read infinite packets 
+             *          until a TYPE_OK is read.
+             *          --
+             *          It reads a packet and confirms to sender;
+             *          The sender keeps sending 
+             *              TYPE_REPORT_FILE | TYPE_REPORT_SELF
+             */
+            
+            while(1) 
+            {
+                xPacket p = server_wait_from_socket(&sv, c);
+                if (p.size < 0)
                 {
-                    Address a = *(sv.index_data->peer_ips+i);
-                    printf("NODE #%d -> :%d\n", i + 1, a.port);
+                    printf("DEU MERDA RECEBENDO CONHECIMENTO EM. \n");
+                    break;
+                }
+
+                switch (p.bytes.comm.type)
+                {
+                case TYPE_REPORT_SELF:
+                {
+                    node_id_t N = server_index_save_reported_peer(&sv, &p);
+                    sv.machine_state.StateIndexWaitingPeers.connected++;
+
+                    printf(
+                        "[%ld / %ld]: SAVED NODE %ld \n", 
+                        sv.machine_state.StateIndexWaitingPeers.connected, 
+                        sv.net_size - 1,
+                        N
+                    );
+
+                    if (sv.machine_state.StateIndexWaitingPeers.connected == sv.net_size - 1)
+                    {
+                        printf("FOUND:\n");
+                        for (int i = 0; i < sv.net_size - 1; i++)
+                        {
+                            Address a = *(sv.index_data->peer_ips + i);
+                            printf("NODE #%d -> :%d\n", i + 1, a.port);
+                        }
+                        // server_set_state(&sv, SERVER_IDLE);
+                    }
+                    break;
+                }
+
+                case TYPE_REPORT_FILE:
+                {
+                    printf("RECEIVED FILE DATA. :\n");
+                    xReportFileKnowledge r = p.bytes.comm.content.report_file;
+                    printf("File Name: %s\n", r.file_name);
+                    printf("File ID: %llu\n", (unsigned long long)r.file_id);
+                    printf("File Size: %llu\n", (unsigned long long)r.file_size);
+
+                    printf("Fragment Count: %u\n", r.frag_count);
+
+                    for (int i = 0; i < r.frag_count && i < 2; i++)
+                    {
+                        printf("  Fragment %d:\n", i);
+                        printf("    fragment: %u\n", r.fragments[i].fragment);
+                        printf("    size: %llu\n", (unsigned long long)r.fragments[i].size);
+                        printf("    node_id: %llu\n", (unsigned long long)r.fragments[i].node_id);
+                    }
+
+                    break;
+                }
+
+                case TYPE_OK:
+                {
+                    printf("CLIENT DONE\n");
+                    goto client_done;
+                    break;
+                }
+
+                default:
+                {
+                    printf("UNEXPECTED TYPE \n");
+                    break;
+                }
                 }
             }
-
+        client_done:
+            server_close_socket(&sv, c);
+            if (sv.machine_state.StateIndexWaitingPeers.connected == sv.net_size - 1)
+                server_set_state(&sv, SERVER_IDLE);
             break;
         }
 
@@ -276,29 +343,104 @@ int main(int argc, char **argv) {
 
         case SERVER_REPORT_KNOWLEDGE_TO_INDEX:
         {
+            printf("THE HIVE REQUIRES MY KNOWLEDGE\n");
 
             if (!server_dial_index(&sv))
             {
-                printf("Error connecting to index.\n");
+                printf("\tError connecting to index.\n");
                 break;
             }
 
-            printf("INDEX CONNECTION %d\n", sv.index.stream_fd);
-
-            xPacket p = xpacket_report_self(&sv);
-            // xpacket_debug(&p);
-
-            int w = 0;
-            do
+            xPacket presentation = xpacket_presentation(&sv) ;
+            int r = server_send_to_index(&sv, &presentation);
+            if ( ! r ) 
             {
-                w = server_send_to_index(&sv, &p);
-                perror("index write");
-                usleep(10 * 1000);
-            } while (w == 0);
+                printf("\tError sending presentation.\n");
+                break;
+            }
+            if ( ! server_wait_ok(&sv, sv.index.stream_fd) )
+            {
+                printf("\tIndex did not confirm presentation.\n");
+                break;
+            }
 
-            printf("\nWrote %d bytes to INDEX #%ld\n", w, sv.index.node_id);
+            xPacket pkt_report_self = xpacket_report_self(&sv);
+            if ( server_send_to_index(&sv, &pkt_report_self) <= 0 ) {
+                printf("\tError sending data to index.");
+                perror("index write");
+                break;
+            }
+
+            printf("\tREPORTED MYSELF.\n");
+
+            if ( fs.file_count > 0 )
+            {
+                printf("\tI HAVE FILES TO REPORT\n");
+                for ( int i = 0 ; i < fs.file_count ; i++)
+                {
+                    xFileContainer f = fs.files[i];
+
+                    printf("\t\tREPORTING FILE %s | SIZE %d | FRAGS %d \n", 
+                        f.file_name, 
+                        f.size, 
+                        f.fragment_count_total);
+
+                    xReportFileKnowledge rn = {0};
+                    rn.file_id    = f.file_id;
+                    rn.file_size  = f.size;
+                    rn.frag_count = f.fragment_count_total;
+                    memcpy(rn.file_name, f.file_name, sizeof(f.file_name));
+
+                    printf("\t\tREPORTING FILE %s | SIZE %ld | FRAGS %ld \n", 
+                        rn.file_name, 
+                        rn.file_size, 
+                        rn.frag_count);
+
+                    for (int j = 0; j<2; j++)
+                    {
+                        if ( f.fragments[j].fragment_id != 0 )
+                        {
+                            rn.fragments[j].fragment    = f.fragments[j].fragment_id;
+                            rn.fragments[j].size        = f.fragments[j].fragment_size;
+                            rn.fragments[j].node_id     = sv.me.node_id;
+
+                            printf("\t\tREPORTING FRAG %d | SIZE %d \n", 
+                                rn.fragments[j].fragment,
+                                rn.fragments[j].size
+                            );
+                        }
+                    }
+
+                    xPacket pkt_rfn = xpacket_new(&sv, TYPE_REPORT_FILE);
+                    pkt_rfn.bytes.comm.content.report_file = rn;
+                    pkt_rfn.size = sizeof(pkt_rfn.bytes.comm);
+                    
+                    xpacket_debug(&pkt_rfn);
+
+                    int R = server_send_to_index(&sv, &pkt_rfn);
+                    if (R <= 0)
+                    {
+                        printf("\t\tError sending file to index. ");
+                        perror("index write");
+                        continue;
+                    }
+                }
+            }
+            else 
+            {
+                printf("\tNO FILES TO REPORT.\n");
+            }
+
+            // printf("\nWrote %d bytes to INDEX #%ld\n", w, sv.index.node_id);
+
+
+            /**
+             * ENDS THE TRANSMISSION
+             */
+            server_send_ok(&sv, sv.index.stream_fd);
 
             server_set_state(&sv, SERVER_IDLE);
+
 
             break;
         }
@@ -351,9 +493,9 @@ int main(int argc, char **argv) {
                     tcp_close(c);
                     break;
                 }
+
                 else
                 {
-
                     printf("PRESENTED AS NODE #%lu.\n", N);
                     xPacket pkt_ok = xpacket_ok(&sv);
                     server_send_to_socket( &sv, &pkt_ok, c );  

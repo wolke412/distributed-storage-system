@@ -30,7 +30,7 @@ typedef struct xFileContainer {
   uint64_t size; 
   uint8_t fragment_count_total;
 
-  xFileFragment fragments[2];
+  xFileFragment fragments[2]; // this should prolly use REDUNDANCY
 } xFileContainer;
 
 typedef struct xFileServer{
@@ -40,9 +40,9 @@ typedef struct xFileServer{
 
 // ------------------------------------------------------------ 
 typedef struct xFragmentNetworkPointer {
-    uint16_t fragment;
-    uint64_t size;
-    uint64_t node_id;       
+  uint16_t fragment;
+  uint64_t size;
+  uint64_t node_id;       
 } xFragmentNetworkPointer;
 
 // linked list like
