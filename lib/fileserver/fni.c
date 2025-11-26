@@ -83,7 +83,8 @@ void xfilenetindex_debug(const xFileNetworkIndex *net) {
     const xFileInNetwork *file = net->files;
     uint16_t index = 0;
 
-    while (file) {
+    while (file != NULL) {
+        printf("I: %p\n", file);
         printf("File #%u: ID: %u\n", index++, file->file_id);
         printf("  Total fragments: %llu\n",
                (unsigned long long)file->total_fragments);

@@ -92,7 +92,7 @@ xFileContainer *xfileserver_find_file_by_name( xFileServer *idx, char *name ) {
 
     xFileContainer *f = NULL;
 
-    name[255] = '\0'; // make sure last character is 
+    name[199] = '\0'; // make sure last character is 
 
     for (int i = 0; i < idx->file_count; i++) {
         f = idx->files + i;

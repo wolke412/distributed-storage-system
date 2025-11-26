@@ -86,12 +86,19 @@ void server_healthcheck( Server *sv )
 
       sv->peer_b.status.open = false;
 
-      xprocedure_peer_died_notify( sv ); 
+      sv->net_size--;
+      sv->death_count++;
 
+      xprocedure_peer_died_notify(sv);
 
+      if (server_is_index(sv))
+      {
+        printf("I MUST UPDATE MY INTERNAL INDEX STUFF \n");
 
+        int i = sv->peer_b.node_id - 1;
+        memset(&sv->index_data->peer_ips[i], 0, sizeof(Address));
+      }
       server_set_state(sv, SERVER_WAITING_NEW_PEER);
-
     } else if (n < 0) {
         // fuck it then
     } else {
@@ -312,4 +319,84 @@ int xprocedure_peer_died_forward( Server *sv, xPacket *p )
 int xprocedure_index_died_notify( Server *sv )
 {
    
+}
+
+
+int xprocedure_save_file_to_index( Server *sv, xFileServer *fs, xFileNetworkIndex *fnetidx, xReportFileKnowledge *r, int c)
+{
+  printf("INIT PROC \n" );
+  int fragments_redundancy = r->frag_count * REDUNDANCY;
+
+  // xfilenetindex_debug(fnetidx);
+  // xfileserver_debug(fs);
+
+  xFileInNetwork *fni = xfilenetindex_find_file(fnetidx, r->file_id);
+  xFileContainer *fc = xfileserver_find_file(fs, r->file_id);
+  if (fni == NULL) // if file is not created yet
+  {
+    printf("SETTING INDEX\n");
+    fni = xfilenetindex_new_file(r->file_id, r->frag_count * REDUNDANCY);
+    xfilenetindex_add_file(fnetidx, fni);
+  }
+  if (fc == NULL) // if file is not created yet
+  {
+    printf("SETTING FILE CONTAINER\n");
+    fc = xfileserver_add_file(fs, r->file_name, r->file_id, r->file_size, r->frag_count);
+  }
+
+  int frags[2] = {0, 0};
+
+  for (int i = 0; i < 2; i++)
+  {
+    printf("  Fragment %d:\n", i);
+    printf("    fragment: %u\n", r->fragments[i].fragment);
+    printf("    size: %llu\n", (unsigned long long)r->fragments[i].size);
+    printf("    node_id: %llu\n", (unsigned long long)r->fragments[i].node_id);
+    frags[i] = r->fragments[i].fragment;
+  }
+
+  int diff = frags[1] - frags[0];
+
+  printf("DIFF BETWEEN FRAGS: %d\n", diff);
+ 
+  // if ony onde fragment, than there will be no redundancy per node, only in the next neighbour
+  if ( r->frag_count == 1 ) {
+    printf("HALDLING 1 FRAG FILE.\n");
+    if ( fni->fragments[0].fragment != 0 )
+    {
+      if ( fni->fragments[0].node_id < r->fragments[0].node_id )
+      {
+        fni->fragments[1] = r->fragments[0];
+      }
+      else {
+        fni->fragments[1] = fni->fragments[0];
+        fni->fragments[0] = r->fragments[0];
+      }
+    }
+    else {
+      fni->fragments[0] = r->fragments[0];
+    }
+  }
+  else if ( diff > 1 ) // iff diff between frag ids is negative, thes isthe borders
+  {
+    fni->fragments[0] = r->fragments[0];
+    fni->fragments[r->frag_count * REDUNDANCY - 1] = r->fragments[1];
+  }
+  else
+  {
+    if ( r->frag_count == 2 && fni->fragments[0].fragment == 0 ) {
+      fni->fragments[0] = r->fragments[0];
+      fni->fragments[r->frag_count * REDUNDANCY - 1] = r->fragments[1];
+    }
+    else {
+      size_t place = (frags[1] - 1) * REDUNDANCY;
+
+      printf("Writing to fragments[%zu] and fragments[%zu]\n",
+             place, place - 1);
+
+      fni->fragments[place - 1] = r->fragments[0];
+      fni->fragments[place] = r->fragments[1];
+    }
+  }
+
 }

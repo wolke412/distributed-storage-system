@@ -355,6 +355,7 @@ xPacket server_wait_from_peer_b(Server *sv) {
 
 int server_is_valid_node(Server *sv, node_id_t n) {
 
+    if ( n <= 0 ) return 0;
     if ( n == sv->me.node_id) return 1;
 
     int i = n - 1;
@@ -533,7 +534,7 @@ int server_wait_ok(Server *sv, int to)
 
 
 
-void xreqfragcreation_new( xRequestFragmentCreation *fragcreation, xFileContainer *fc, xFragmentNetworkPointer *frag )
+void xreqfragcreation_new( xRequestFragmentCreation *fragcreation, xFileContainer *fc, xFragmentNetworkPointer *frag, int ptr_index )
 {
     // sets file name
     memcpy(
@@ -547,6 +548,7 @@ void xreqfragcreation_new( xRequestFragmentCreation *fragcreation, xFileContaine
     fragcreation->fragment_count_total  = fc->fragment_count_total;
     fragcreation->frag_id               = frag->fragment;
     fragcreation->frag_size             = frag->size;
+    fragcreation->ptr_index             = ptr_index;
 }
 
 

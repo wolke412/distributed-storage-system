@@ -25,7 +25,7 @@ typedef struct xFileFragment {
 } xFileFragment;
 
 typedef struct xFileContainer {
-  char file_name[256];
+  char file_name[200];
   uint16_t file_id;
   uint64_t size; 
   uint8_t fragment_count_total;

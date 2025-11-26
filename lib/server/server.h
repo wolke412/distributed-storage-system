@@ -96,6 +96,7 @@ typedef struct xRequestFragmentCreation{
   uint64_t file_size;
   uint64_t file_id;
   uint8_t fragment_count_total;
+  uint16_t ptr_index;
     
   uint64_t frag_id;
   uint64_t frag_size;
@@ -430,7 +431,7 @@ void xpacket_debug(const xPacket *p);
 
 
 // ------------------------------------------------------------ 
-void xreqfragcreation_new( xRequestFragmentCreation *fragcreation, xFileContainer *fc, xFragmentNetworkPointer *frag );
+void xreqfragcreation_new( xRequestFragmentCreation *fragcreation, xFileContainer *fc, xFragmentNetworkPointer *frag, int ptr_index);
 // ------------------------------------------------------------ 
 
 void print_state(eServerState st);

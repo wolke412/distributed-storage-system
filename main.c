@@ -153,6 +153,43 @@ int main(int argc, char **argv) {
                 sv.index_data           = malloc(sizeof(xIndexData));
                 sv.index_data->peer_ips = malloc(sv.net_size * sizeof(Address));
 
+
+                if  ( fs.file_count > 0  )
+                {
+                    printf("\tI HAVE TO INDEX MY OWN FILES\n");
+                    for (int i = 0; i < fs.file_count; i++)
+                    {
+                        xFileContainer f = fs.files[i];
+
+                        xReportFileKnowledge rn = {0};
+                        rn.file_id = f.file_id;
+                        rn.file_size = f.size;
+                        rn.frag_count = f.fragment_count_total;
+                        memcpy(rn.file_name, f.file_name, sizeof(f.file_name));
+
+                        printf("\t\tREPORTING FILE %s | SIZE %ld | FRAGS %ld \n",
+                               rn.file_name,
+                               rn.file_size,
+                               rn.frag_count);
+
+                        for (int j = 0; j < 2; j++)
+                        {
+                            if (f.fragments[j].fragment_id != 0)
+                            {
+                                rn.fragments[j].fragment = f.fragments[j].fragment_id;
+                                rn.fragments[j].size = f.fragments[j].fragment_size;
+                                rn.fragments[j].node_id = sv.me.node_id;
+
+                                printf("\t\tREPORTING FRAG %d | SIZE %d \n",
+                                       rn.fragments[j].fragment,
+                                       rn.fragments[j].size);
+                            }
+                        }
+
+                        xprocedure_save_file_to_index(&sv, &fs, &fnetidx, &rn, 0);
+                    }
+                }
+
                 server_set_state(&sv, SERVER_INDEX_PRESENT_ITSELF);
             }
             else
@@ -225,6 +262,8 @@ int main(int argc, char **argv) {
             
             while(1) 
             {
+
+                printf("RECEBENDO CONHECIMENTO. \n");
                 xPacket p = server_wait_from_socket(&sv, c);
                 if (p.size < 0)
                 {
@@ -267,21 +306,15 @@ int main(int argc, char **argv) {
                     printf("File ID: %llu\n", (unsigned long long)r.file_id);
                     printf("File Size: %llu\n", (unsigned long long)r.file_size);
 
-                    printf("Fragment Count: %u\n", r.frag_count);
-
-                    for (int i = 0; i < r.frag_count && i < 2; i++)
-                    {
-                        printf("  Fragment %d:\n", i);
-                        printf("    fragment: %u\n", r.fragments[i].fragment);
-                        printf("    size: %llu\n", (unsigned long long)r.fragments[i].size);
-                        printf("    node_id: %llu\n", (unsigned long long)r.fragments[i].node_id);
-                    }
+                    xprocedure_save_file_to_index( &sv, &fs, &fnetidx, &r, c );
+                    server_send_ok(&sv, c);
 
                     break;
                 }
 
                 case TYPE_OK:
                 {
+                    xfilenetindex_debug( &fnetidx );
                     printf("CLIENT DONE\n");
                     goto client_done;
                     break;
@@ -293,6 +326,7 @@ int main(int argc, char **argv) {
                     break;
                 }
                 }
+
             }
         client_done:
             server_close_socket(&sv, c);
@@ -386,7 +420,7 @@ int main(int argc, char **argv) {
                         f.fragment_count_total);
 
                     xReportFileKnowledge rn = {0};
-                    rn.file_id    = f.file_id;
+                    rn.file_id = f.file_id;
                     rn.file_size  = f.size;
                     rn.frag_count = f.fragment_count_total;
                     memcpy(rn.file_name, f.file_name, sizeof(f.file_name));
@@ -424,6 +458,8 @@ int main(int argc, char **argv) {
                         perror("index write");
                         continue;
                     }
+
+                    server_wait_ok( &sv, sv.index.stream_fd );
                 }
             }
             else 
@@ -431,8 +467,7 @@ int main(int argc, char **argv) {
                 printf("\tNO FILES TO REPORT.\n");
             }
 
-            // printf("\nWrote %d bytes to INDEX #%ld\n", w, sv.index.node_id);
-
+            printf("\tSENT ALL FILES.\n");
 
             /**
              * ENDS THE TRANSMISSION
@@ -826,7 +861,7 @@ int main(int argc, char **argv) {
                 fragcount = 1;
             }
 
-            int id = ++FILE_SERVER_ID;
+            int id = fs.file_count+1;
             xFileContainer *file = xfileserver_add_file(&fs, fc.name, id, sz, fragcount);
    
 
@@ -868,11 +903,12 @@ int main(int argc, char **argv) {
 
                 int j = 0;
                 int tries = 0;
-                while (j < REDUNDANCY && tries < sv.index_data->known_peers)
+                while (j < REDUNDANCY && tries < sv.index_data->known_peers+1)
                 {
                     node_id_t nid = (node + tries++) % (sv.net_size + sv.death_count); // original count
                     nid += 1; 
 
+                    printf("\tTrying Fragment #%d into node %ld\n", i, nid);
                     if (!server_is_valid_node(&sv, nid)) continue;
 
                     printf("\tFragment #%d into node %ld\n", i, nid);
@@ -979,7 +1015,7 @@ weird:
 
                      
                     xRequestFragmentCreation fragcreation = {0};
-                    xreqfragcreation_new(&fragcreation, fc, &frag);
+                    xreqfragcreation_new(&fragcreation, fc, &frag, i);
 
                     xPacket pkt_fragment = xpacket_send_fragment(&sv, &fragcreation);
 
@@ -1041,9 +1077,11 @@ weird:
                     {
                         xFragmentNetworkPointer *n = ptr + (i * REDUNDANCY);
 
+                        printf("1. NODE %ld \n", n->node_id);
                         if ( server_is_valid_node(&sv, n->node_id) )
                         {
                             frags[i] = n;
+                            printf("1. USING IDX = %d | FRAG %d, NODE %ld \n", i*REDUNDANCY, frags[i]->fragment, frags[i]->node_id);
                             continue;
                         }
 
@@ -1051,7 +1089,7 @@ weird:
                         int dx = (i * REDUNDANCY)+1;
                         frags[i] = ptr + dx;
 
-                        printf("USING IDX = %d | FRAG %d, NODE %ld \n", dx, frags[i]->fragment, frags[i]->node_id);
+                        printf("2. USING IDX = %d | FRAG %d, NODE %ld \n", dx, frags[i]->fragment, frags[i]->node_id);
                     }
                 }
             }

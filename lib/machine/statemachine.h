@@ -28,6 +28,9 @@ int xprocedure_send_fragment( Server *sv, xFileServer *fs, int file_id, int frag
 
 
 
+
+int xprocedure_save_file_to_index( Server *sv, xFileServer *fs, xFileNetworkIndex *fnetidx, xReportFileKnowledge *r, int c);
+
 int xprocedure_peer_died( Server *sv ) ;
 
 #endif
