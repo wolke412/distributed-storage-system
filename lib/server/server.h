@@ -223,7 +223,7 @@ typedef struct {
 
   union PacketType {
     
-      // this is dumb. but il keep it to remind me of how dumb one can be
+    // this is dumb. but il keep it to remind me of how dumb one can be
     xIndexPresentationPacket index_presentation_pkt; 
 
     // this should be enough
